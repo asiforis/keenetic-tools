@@ -4,12 +4,11 @@ package awgcron
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
-	"strconv"
 	"time"
 
+	"github.com/asiforis/keenetic-tools/internal/cli"
 	"github.com/asiforis/keenetic-tools/internal/crontab"
 	"github.com/asiforis/keenetic-tools/internal/markers"
 	"github.com/asiforis/keenetic-tools/internal/selfbin"
@@ -32,13 +31,6 @@ var Timeout = 120 * time.Second
 
 var schedules = map[string]string{"hourly": "01 * * * *", "daily": "02 4 * * *"}
 
-// Error is a user-facing failure; Main prints it as "Ошибка: ...".
-type Error string
-
-func (e Error) Error() string { return string(e) }
-
-func fail(format string, a ...any) error { return Error(fmt.Sprintf(format, a...)) }
-
 func say(env *sys.Env, format string, a ...any) { fmt.Fprintf(env.Stdout, format+"\n", a...) }
 
 func usage(env *sys.Env) {
@@ -49,22 +41,9 @@ func usage(env *sys.Env) {
 `)
 }
 
-type exitCode int
-
-func (c exitCode) Error() string { return "exit " + strconv.Itoa(int(c)) }
-
 // Main runs `awg-cron ARGS...` and returns the exit code.
 func Main(env *sys.Env, args []string, self string) int {
-	err := dispatch(env, args, self)
-	var code exitCode
-	switch {
-	case err == nil:
-		return 0
-	case errors.As(err, &code):
-		return int(code)
-	}
-	fmt.Fprintf(env.Stderr, "Ошибка: %v\n", err)
-	return 1
+	return cli.Code(dispatch(env, args, self), env.Stderr)
 }
 
 func dispatch(env *sys.Env, args []string, self string) error {
@@ -78,7 +57,7 @@ func dispatch(env *sys.Env, args []string, self string) error {
 		return nil
 	case "install":
 		if len(args) > 2 {
-			return fail("Слишком много аргументов.")
+			return cli.Fail("Слишком много аргументов.")
 		}
 		freq := "hourly"
 		if len(args) == 2 {
@@ -87,25 +66,25 @@ func dispatch(env *sys.Env, args []string, self string) error {
 		sched, ok := schedules[freq]
 		if !ok {
 			usage(env)
-			return exitCode(1)
+			return cli.Exit(1)
 		}
 		return Install(env, sched, self)
 	case "uninstall":
 		if len(args) != 1 {
-			return fail("uninstall не принимает дополнительных аргументов.")
+			return cli.Fail("uninstall не принимает дополнительных аргументов.")
 		}
 		return Uninstall(env)
 	case "run":
 		if len(args) != 1 {
-			return fail("run не принимает аргументов.")
+			return cli.Fail("run не принимает аргументов.")
 		}
 		if code := Run(env); code != 0 {
-			return exitCode(code)
+			return cli.Exit(code)
 		}
 		return nil
 	}
 	usage(env)
-	return exitCode(1)
+	return cli.Exit(1)
 }
 
 // cronLine is the crontab entry that runs the job.
@@ -117,10 +96,10 @@ func cronLine(schedule string) string {
 // The tunnel itself is not restarted.
 func Install(env *sys.Env, schedule, self string) error {
 	if !env.IsRoot() {
-		return fail("Запустите под root в shell Entware.")
+		return cli.Fail("Запустите под root в shell Entware.")
 	}
 	if !env.IsExecutable(Service) {
-		return fail("Не найден исполняемый %s. Проверьте имя и регистр букв.", Service)
+		return cli.Fail("Не найден исполняемый %s. Проверьте имя и регистр букв.", Service)
 	}
 	if err := selfbin.Check(env); err != nil {
 		return err
@@ -151,7 +130,7 @@ func Install(env *sys.Env, schedule, self string) error {
 // awg-monitor still uses it.
 func Uninstall(env *sys.Env) error {
 	if !env.IsRoot() {
-		return fail("Запустите под root в shell Entware.")
+		return cli.Fail("Запустите под root в shell Entware.")
 	}
 	if env.IsFile(Crontab) {
 		b, err := crontab.Update(env, Crontab, markers.Restart, "", backup)
@@ -202,7 +181,7 @@ func Run(env *sys.Env) int {
 	defer lock.Release()
 
 	// Keep only the latest run's output in RAM; append mode so a skip note survives.
-	log, err := os.OpenFile(env.P(Log), os.O_WRONLY|os.O_CREATE|os.O_TRUNC|os.O_APPEND, 0o644)
+	log, err := env.OpenOwn(Log, os.O_WRONLY|os.O_TRUNC|os.O_APPEND, 0o644)
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "%s: %v\n", Log, err)
 		return 1
@@ -228,7 +207,7 @@ func Run(env *sys.Env) int {
 }
 
 func appendLog(env *sys.Env, line string) {
-	f, err := os.OpenFile(env.P(Log), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	f, err := env.OpenOwn(Log, os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return
 	}

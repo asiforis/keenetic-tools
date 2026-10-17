@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/asiforis/keenetic-tools/internal/cli"
 )
 
 // period parses "24h" / "7d" (default 24h) into the time window.
@@ -24,7 +26,7 @@ func (m *M) period(p string) (name string, from, to int64, err error) {
 	}
 	n, perr := strconv.ParseInt(p[:max(len(p)-1, 0)], 10, 64)
 	if mult == 0 || perr != nil || n <= 0 || !isNum(p[:len(p)-1]) {
-		return "", 0, 0, fail("Период задаётся как 24h или 7d.")
+		return "", 0, 0, cli.Fail("Период задаётся как 24h или 7d.")
 	}
 	to = m.env.Now().Unix()
 	return p, to - n*mult, to, nil
@@ -116,7 +118,7 @@ func (m *M) writeReport(w io.Writer, p string) error {
 		return err
 	}
 	if len(m.logFiles("samples")) == 0 {
-		return fail("Замеров пока нет. Первый появится в течение минуты после установки.")
+		return cli.Fail("Замеров пока нет. Первый появится в течение минуты после установки.")
 	}
 	recs := m.records("samples", from, to)
 	if len(recs) == 0 {
@@ -283,7 +285,7 @@ func (m *M) domains(p string) error {
 		return err
 	}
 	if len(m.logFiles("domains")) == 0 {
-		return fail("Проверок доменов пока нет. Задайте DOMAINS_WATCH в /opt/etc/awg-monitor.conf.")
+		return cli.Fail("Проверок доменов пока нет. Задайте DOMAINS_WATCH в /opt/etc/awg-monitor.conf.")
 	}
 	type stat struct {
 		n, wn, wok, tok int
@@ -380,9 +382,9 @@ func (m *M) missed(p string) error {
 	}
 	if len(m.logFiles("missed")) == 0 {
 		if !m.c.DNSCapture {
-			return fail("Сбор выключен. Включите: opkg install tcpdump, затем awg-monitor enable capture.")
+			return cli.Fail("Сбор выключен. Включите: opkg install tcpdump, затем awg-monitor enable capture.")
 		}
-		return fail("Данных пока нет — подождите несколько минут.")
+		return cli.Fail("Данных пока нет — подождите несколько минут.")
 	}
 	var (
 		probeW, probeT = map[string]string{}, map[string]string{}

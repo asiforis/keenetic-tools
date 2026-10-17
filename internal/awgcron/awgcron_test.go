@@ -295,3 +295,31 @@ func TestRunRealProcesses(t *testing.T) {
 		}
 	})
 }
+
+func TestCrontabWithCRLF(t *testing.T) {
+	r := newRouter(t)
+	r.Write(Crontab, other+hourly+" \r\n", 0o600)
+	r.mustRun("install", "daily")
+	if got := r.Read(Crontab); got != other+daily+"\n" {
+		t.Fatalf("crontab = %q, want the old line replaced", got)
+	}
+}
+
+// Another user may plant a symlink at the fixed /tmp paths.
+func TestRunDoesNotFollowSymlinks(t *testing.T) {
+	r := newRouter(t)
+	r.Runner.On(Service+" restart", "ok\n", 0)
+	r.Write("/opt/etc/passwd", "root:x:0:0\n", 0o644)
+	for _, p := range []string{Log, LockFile} {
+		if err := os.Symlink(r.P("/opt/etc/passwd"), r.P(p)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r.mustRun("run")
+	if got := r.Read("/opt/etc/passwd"); got != "root:x:0:0\n" {
+		t.Fatalf("symlink target written: %q", got)
+	}
+	if !strings.Contains(r.Read(Log), "restart exit code: 0") {
+		t.Fatalf("log = %q", r.Read(Log))
+	}
+}

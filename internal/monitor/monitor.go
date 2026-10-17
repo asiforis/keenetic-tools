@@ -7,9 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"strconv"
 	"strings"
 
+	"github.com/asiforis/keenetic-tools/internal/cli"
 	"github.com/asiforis/keenetic-tools/internal/conf"
 	"github.com/asiforis/keenetic-tools/internal/crontab"
 	"github.com/asiforis/keenetic-tools/internal/markers"
@@ -23,11 +23,13 @@ const (
 	NoDirFlag = "/tmp/awg-monitor.nodir"
 	// DNS capture for "missed" (RAM only).
 	CapLog   = "/tmp/awg-monitor.dns.log"
+	capWork  = CapLog + ".work" // a rotated log awaiting harvest
+	capOff   = CapLog + ".off"  // harvested bytes of CapLog
 	CapPID   = "/tmp/awg-monitor.dns.pid"
 	DNSMap   = "/tmp/awg-monitor.dnsmap"
 	CTSeen   = "/tmp/awg-monitor.ctseen"
 	Includes = "/tmp/awg-monitor.includes"
-	capMax   = 4 << 20
+	capMax   = 1 << 20 // CapLog is rotated past this size
 	// DirMarker in the log directory proves the disk is mounted.
 	DirMarker     = ".awg-monitor"
 	DefaultLogDir = "/opt/var/log/awg-monitor"
@@ -37,6 +39,9 @@ const (
 	backupPrefix = crontab.Path + ".awg-monitor-backup."
 	cronLine     = "* * * * * root " + selfbin.MonitorLink + " collect >/dev/null 2>&1 " + markers.Monitor
 )
+
+// dataDirs are the subdirectories of the log directory.
+var dataDirs = []string{"samples", "domains", "missed", "dumps", "snapshots", "bundles"}
 
 // Public DoH resolvers: HTTPS to them is a device's own DNS, not a site.
 var dohIPs = strings.Fields("8.8.8.8 8.8.4.4 1.1.1.1 1.0.0.1 9.9.9.9 149.112.112.112 94.140.14.14 94.140.15.15 208.67.222.222 208.67.220.220 77.88.8.8 77.88.8.1 76.76.2.0 76.76.10.0")
@@ -54,17 +59,6 @@ type M struct {
 func New(env *sys.Env, self string) *M {
 	return &M{env: env, c: Defaults(), net: realNet{}, log: syslogger(env), self: self}
 }
-
-// Error is a user-facing failure; Main prints it as "Ошибка: ...".
-type Error string
-
-func (e Error) Error() string { return string(e) }
-
-func fail(format string, a ...any) error { return Error(fmt.Sprintf(format, a...)) }
-
-type exitCode int
-
-func (c exitCode) Error() string { return "exit " + strconv.Itoa(int(c)) }
 
 func (m *M) say(format string, a ...any) { fmt.Fprintf(m.env.Stdout, format+"\n", a...) }
 
@@ -99,24 +93,15 @@ func Main(env *sys.Env, args []string, self string) int {
 
 // Main runs one command and returns the exit code.
 func (m *M) Main(args []string) int {
-	err := m.dispatch(args)
-	var code exitCode
-	switch {
-	case err == nil:
-		return 0
-	case errors.As(err, &code):
-		return int(code)
-	}
-	fmt.Fprintf(m.env.Stderr, "Ошибка: %v\n", err)
-	return 1
+	return cli.Code(m.dispatch(args), m.env.Stderr)
 }
 
 func maxArgs(args []string, n int, cmd string) error {
 	if len(args) > n {
 		if n == 0 {
-			return fail("%s не принимает аргументов.", cmd)
+			return cli.Fail("%s не принимает аргументов.", cmd)
 		}
-		return fail("%s принимает один аргумент.", cmd)
+		return cli.Fail("%s принимает один аргумент.", cmd)
 	}
 	return nil
 }
@@ -161,7 +146,7 @@ func (m *M) dispatch(args []string) error {
 	cmd, ok := cmds[action]
 	if !ok {
 		m.usage()
-		return exitCode(1)
+		return cli.Exit(1)
 	}
 	if err := m.loadConf(); err != nil {
 		if action == "collect" {
@@ -214,7 +199,7 @@ func (m *M) requireLogdir() error {
 	if dir == "" {
 		dir = "не задан"
 	}
-	return fail("Каталог логов '%s' недоступен (нет маркера %s). Диск подключён? Переустановите: keenetic-tools awg-monitor install --log-dir DIR", dir, DirMarker)
+	return cli.Fail("Каталог логов '%s' недоступен (нет маркера %s). Диск подключён? Переустановите: keenetic-tools awg-monitor install --log-dir DIR", dir, DirMarker)
 }
 
 // path joins the log directory with a relative path.
@@ -222,7 +207,7 @@ func (m *M) path(rel string) string { return m.c.LogDir + "/" + rel }
 
 func (m *M) requireRoot() error {
 	if !m.env.IsRoot() {
-		return fail("Запустите под root в shell Entware.")
+		return cli.Fail("Запустите под root в shell Entware.")
 	}
 	return nil
 }

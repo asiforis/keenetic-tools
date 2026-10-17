@@ -5,6 +5,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/asiforis/keenetic-tools/internal/cli"
 )
 
 // domNorm strips scheme, path and port; it returns the lowercased host or
@@ -191,13 +193,13 @@ func (m *M) domCollect(s *Sample) {
 
 func (m *M) checkDomain(args []string) error {
 	if len(args) == 0 {
-		return fail("Укажите домен: awg-monitor check-domain example.com")
+		return cli.Fail("Укажите домен: awg-monitor check-domain example.com")
 	}
 	var list []string
 	for _, a := range args {
 		h, ok := domNorm(a)
 		if !ok {
-			return fail("Некорректный домен: '%s'.", a)
+			return cli.Fail("Некорректный домен: '%s'.", a)
 		}
 		list = append(list, h)
 	}

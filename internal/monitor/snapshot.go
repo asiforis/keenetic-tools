@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/asiforis/keenetic-tools/internal/cli"
 	"github.com/asiforis/keenetic-tools/internal/sys"
 )
 
@@ -135,8 +136,6 @@ func md5hex(b []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
-func (m *M) configHash() string { return md5hex(m.configStable()) }
-
 // listSnapshots returns snapshot file names, oldest first.
 func (m *M) listSnapshots() []string {
 	ents, err := os.ReadDir(m.env.P(m.path("snapshots")))
@@ -155,12 +154,12 @@ func (m *M) listSnapshots() []string {
 
 var labelChars = strings.NewReplacer("/", "_", " ", "_", "\t", "_")
 
-// snapshotWrite saves a snapshot and returns its name and hash.
-func (m *M) snapshotWrite(label string) (name, hash string, err error) {
+// snapshotWrite saves a snapshot of stable (the configStable output) and
+// returns its name.
+func (m *M) snapshotWrite(label string, stable []byte) (name string, err error) {
 	label = strings.TrimPrefix(labelChars.Replace(label), ".")
 	now := m.env.Now()
-	stable := m.configStable()
-	hash = md5hex(stable)
+	hash := md5hex(stable)
 	name = now.Format("2006-01-02_150405")
 	if label != "" {
 		name += "-" + label
@@ -174,7 +173,7 @@ func (m *M) snapshotWrite(label string) (name, hash string, err error) {
 	b.Write(stable)
 	b.WriteString("\n## info\n")
 	m.configInfo(&b)
-	return name, hash, m.env.WriteAtomic(m.path("snapshots/"+name), b.Bytes(), 0o644)
+	return name, m.env.WriteAtomic(m.path("snapshots/"+name), b.Bytes(), 0o644)
 }
 
 func (m *M) snapshot(label string) error {
@@ -184,10 +183,12 @@ func (m *M) snapshot(label string) error {
 	if label == "" {
 		label = "manual"
 	}
-	name, hash, err := m.snapshotWrite(label)
+	stable := m.configStable()
+	name, err := m.snapshotWrite(label, stable)
 	if err != nil {
 		return err
 	}
+	hash := md5hex(stable)
 	m.say("Снимок: %s", m.path("snapshots/"+name))
 	m.say("Хэш конфигурации: %s", hash)
 	return nil
@@ -229,7 +230,7 @@ func (m *M) resolveSnapshot(q string, list []string) (string, error) {
 			return list[i], nil
 		}
 	}
-	return "", fail("Снимок '%s' не найден. Список: awg-monitor snapshots", q)
+	return "", cli.Fail("Снимок '%s' не найден. Список: awg-monitor snapshots", q)
 }
 
 // stablePart returns the lines between "## stable" and "## info".
@@ -259,12 +260,12 @@ func (m *M) diff(args []string) error {
 	switch len(args) {
 	case 0:
 		if len(list) < 2 {
-			return fail("Нужно минимум два снимка.")
+			return cli.Fail("Нужно минимум два снимка.")
 		}
 		a, b = list[len(list)-2], list[len(list)-1]
 	case 1:
 		if len(list) == 0 {
-			return fail("Снимков пока нет.")
+			return cli.Fail("Снимков пока нет.")
 		}
 		if a, err = m.resolveSnapshot(args[0], list); err != nil {
 			return err
@@ -278,7 +279,7 @@ func (m *M) diff(args []string) error {
 			return err
 		}
 	default:
-		return fail("diff принимает не больше двух снимков.")
+		return cli.Fail("diff принимает не больше двух снимков.")
 	}
 	ta, _ := m.env.ReadFile(m.path("snapshots/" + a))
 	tb, _ := m.env.ReadFile(m.path("snapshots/" + b))

@@ -99,9 +99,6 @@ func (r *Runner) Run(ctx context.Context, c sys.Cmd) sys.Result {
 	if !ok {
 		return sys.Result{Code: -1, Err: &exec.Error{Name: c.Name, Err: exec.ErrNotFound}}
 	}
-	if c.OnStart != nil {
-		c.OnStart(os.Getpid())
-	}
 	res := h(c)
 	if c.Stdout != nil {
 		c.Stdout.Write(res.Output)

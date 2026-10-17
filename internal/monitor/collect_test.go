@@ -248,3 +248,25 @@ func TestConfErrors(t *testing.T) {
 	r.mustRun("snapshots")
 	contain(t, r.Err.String(), "неизвестная настройка FOO")
 }
+
+// A change seen while the snapshot cannot be written is retried later,
+// not recorded as already seen.
+func TestCollectConfigChangeRetried(t *testing.T) {
+	r := newRouter(t)
+	r.mustRun("collect")
+	r.Write("/opt/etc/amnezia/amneziawg/awg0-opkgtun0.conf", "[Interface]\nJc = 8\n", 0o600)
+	at := systest.Epoch.Add(15 * time.Minute)
+	// A directory at the snapshot's name makes the write fail.
+	if err := os.MkdirAll(r.P(logDir+"/snapshots/"+at.Format("2006-01-02_150405")+"-auto.txt"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r.at(at)
+	r.mustRun("collect")
+	lack(t, r.events(), "config_changed snapshot="+at.Format("2006-01-02_150405"))
+	r.at(systest.Epoch.Add(30 * time.Minute))
+	r.mustRun("collect")
+	if list := r.m.listSnapshots(); len(list) != 2 || list[1] != "2026-10-10_123000-auto.txt" {
+		t.Fatalf("snapshots %v", list)
+	}
+	contain(t, r.events(), "config_changed snapshot=2026-10-10_123000-auto.txt")
+}

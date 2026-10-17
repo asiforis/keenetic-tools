@@ -154,3 +154,17 @@ func TestEnableDisable(t *testing.T) {
 	defer l.Release()
 	r.mustFail("не завершается", "disable", "capture")
 }
+
+// A config saved from Windows has CRLF line ends: it is still ours.
+func TestConfWithCRLF(t *testing.T) {
+	r := newRouter(t)
+	r.mustRun("install")
+	r.Write(Conf, strings.ReplaceAll(r.Read(Conf), "\n", "\r\n"), 0o644)
+	r.mustRun("install")
+	r.mustRun("disable", "capture")
+	contain(t, r.Read(Conf), "DNS_CAPTURE=0")
+	r.mustRun("uninstall")
+	if r.Exists(Conf) {
+		t.Fatal("CRLF config left behind")
+	}
+}

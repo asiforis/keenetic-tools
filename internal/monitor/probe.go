@@ -170,10 +170,10 @@ func (m *M) probe(prev State, forceHTTP bool) *Sample {
 	hs := ""
 	s.EP = "-"
 	if s.IfUp && m.env.Have("awg") {
-		hs = m.awgField("latest-handshakes", 1)
-		s.Rx = m.awgField("transfer", 1)
-		s.Tx = m.awgField("transfer", 2)
-		s.EP = m.awgField("endpoints", 1)
+		hs = m.awgFields("latest-handshakes", 1)[0]
+		xfer := m.awgFields("transfer", 1, 2)
+		s.Rx, s.Tx = xfer[0], xfer[1]
+		s.EP = m.awgFields("endpoints", 1)[0]
 	}
 	if !isNum(s.Rx) {
 		s.Rx = ""
@@ -322,18 +322,21 @@ func (m *M) findProcess() string {
 	return strconv.Itoa(best)
 }
 
-// awgField returns column col of the first line of `awg show IFACE what`.
-func (m *M) awgField(what string, col int) string {
-	out, err := m.env.Output(10*time.Second, "awg", "show", m.c.Iface, what)
+// awgFields returns the given columns of the first line of `awg show IFACE what`.
+func (m *M) awgFields(what string, cols ...int) []string {
+	out := make([]string, len(cols))
+	data, err := m.env.Output(10*time.Second, "awg", "show", m.c.Iface, what)
 	if err != nil {
-		return ""
+		return out
 	}
-	line, _, _ := strings.Cut(string(out), "\n")
+	line, _, _ := strings.Cut(string(data), "\n")
 	f := strings.Fields(line)
-	if col < len(f) {
-		return f[col]
+	for i, c := range cols {
+		if c < len(f) {
+			out[i] = f[c]
+		}
 	}
-	return ""
+	return out
 }
 
 // epHost strips the port and IPv6 brackets from an endpoint.

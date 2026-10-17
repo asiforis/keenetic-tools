@@ -23,6 +23,7 @@ func TestStrip(t *testing.T) {
 		{"adds final newline", "a\nb", "a\nb\n"},
 		{"marker in the middle is kept", "x " + marker + " y\n", "x " + marker + " y\n"},
 		{"line equal to marker", marker + "\n", ""},
+		{"trailing blanks and CR", "a\r\n" + ours + " \t\r\n", "a\r\n"},
 		{"other marker kept", "01 * * * * root /x # keenetic-awg-restart: managed by install-awg-cron.sh\n" + ours + "\n",
 			"01 * * * * root /x # keenetic-awg-restart: managed by install-awg-cron.sh\n"},
 	}
@@ -94,5 +95,14 @@ func TestUpdateMissingCrontab(t *testing.T) {
 func TestHas(t *testing.T) {
 	if !Has([]byte("a\n"+ours+"\n"), marker) || Has([]byte("a\n"), marker) {
 		t.Fatal("Has")
+	}
+}
+
+// Has and Strip agree: a line Has reports is one Strip removes.
+func TestHasMatchesStrip(t *testing.T) {
+	for _, in := range []string{ours + "\r\n", "x " + marker + " y\n", "a\n"} {
+		if Has([]byte(in), marker) != (string(Strip([]byte(in), marker)) != in) {
+			t.Errorf("Has and Strip disagree on %q", in)
+		}
 	}
 }

@@ -4,7 +4,9 @@ package selfbin
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -49,17 +51,19 @@ func Install(env *sys.Env, self string) error {
 	if same(self, env.P(Bin)) {
 		return nil
 	}
-	data, err := os.ReadFile(self)
+	// The binary is ~8 MB on a router with little RAM: stream it.
+	if !sys.FileHasMarkerLine(self, markers.Binary) {
+		return fmt.Errorf("%s — не бинарник keenetic-tools", self)
+	}
+	if sameContent(self, env.P(Bin)) {
+		return nil
+	}
+	f, err := os.Open(self)
 	if err != nil {
 		return err
 	}
-	if !sys.HasMarkerLine(data, markers.Binary) {
-		return fmt.Errorf("%s — не бинарник keenetic-tools", self)
-	}
-	if old, err := env.ReadFile(Bin); err == nil && bytes.Equal(old, data) {
-		return nil
-	}
-	return env.WriteAtomic(Bin, data, 0o755)
+	defer f.Close()
+	return env.WriteAtomicFrom(Bin, f, 0o755)
 }
 
 // Link points path at Bin with a relative symlink. Anything else already
@@ -86,6 +90,36 @@ func Unlink(env *sys.Env, path string) error {
 func IsLink(env *sys.Env, path string) bool {
 	t, err := os.Readlink(env.P(path))
 	return err == nil && (t == linkTarget || t == Bin)
+}
+
+// sameContent compares two host files without reading them whole.
+func sameContent(a, b string) bool {
+	fa, err := os.Open(a)
+	if err != nil {
+		return false
+	}
+	defer fa.Close()
+	fb, err := os.Open(b)
+	if err != nil {
+		return false
+	}
+	defer fb.Close()
+	sa, err1 := fa.Stat()
+	sb, err2 := fb.Stat()
+	if err1 != nil || err2 != nil || sa.Size() != sb.Size() {
+		return false
+	}
+	ba, bb := make([]byte, 64<<10), make([]byte, 64<<10)
+	for {
+		na, ea := io.ReadFull(fa, ba)
+		nb, eb := io.ReadFull(fb, bb)
+		if na != nb || !bytes.Equal(ba[:na], bb[:nb]) {
+			return false
+		}
+		if ea != nil || eb != nil {
+			return errors.Is(ea, io.EOF) || errors.Is(ea, io.ErrUnexpectedEOF)
+		}
+	}
 }
 
 func same(a, b string) bool {

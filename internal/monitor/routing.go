@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/asiforis/keenetic-tools/internal/cli"
 )
 
 // Routing is the domain routing of a Keenetic running-config: object-group
@@ -196,14 +198,14 @@ func baseDomain(d string) string {
 
 func (m *M) routeCheck(args []string) error {
 	if len(args) != 1 {
-		return fail("Укажите один домен: awg-monitor route-check example.com")
+		return cli.Fail("Укажите один домен: awg-monitor route-check example.com")
 	}
 	d, ok := domNorm(args[0])
 	if !ok {
-		return fail("Некорректный домен: '%s'.", args[0])
+		return cli.Fail("Некорректный домен: '%s'.", args[0])
 	}
 	if !m.env.Have("ndmc") {
-		return fail("ndmc не найден — команда работает только на Keenetic.")
+		return cli.Fail("ndmc не найден — команда работает только на Keenetic.")
 	}
 	rt := m.routing()
 	group, include, hit := rt.Cover(d)

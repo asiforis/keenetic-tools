@@ -86,3 +86,19 @@ func TestUnlink(t *testing.T) {
 		t.Fatal("symlink not removed")
 	}
 }
+
+func TestInstallSameContentIsNoop(t *testing.T) {
+	r := systest.New(t)
+	bin := fakeBinary(t, "v1")
+	if err := Install(r.Env, bin); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.Stat(r.P(Bin))
+	if err := Install(r.Env, bin); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.Stat(r.P(Bin))
+	if !os.SameFile(before, after) {
+		t.Fatal("identical binary rewritten")
+	}
+}

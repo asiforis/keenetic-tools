@@ -58,9 +58,18 @@ func bindTo(iface string) func(string, string, syscall.RawConn) error {
 		if err := rc.Control(func(fd uintptr) { serr = syscall.BindToDevice(int(fd), iface) }); err != nil {
 			return err
 		}
-		return serr
+		if serr != nil {
+			return &bindError{serr}
+		}
+		return nil
 	}
 }
+
+// bindError is a failure to bind the socket to the device: stage "iface".
+type bindError struct{ err error }
+
+func (e *bindError) Error() string { return "bind to device: " + e.err.Error() }
+func (e *bindError) Unwrap() error { return e.err }
 
 // progress records how far a request got; trace hooks may run in a dial
 // goroutine that outlives the request.
@@ -145,7 +154,8 @@ func stage(err error, https, connected, handshaken bool) string {
 	switch {
 	case errors.As(err, &dnsErr):
 		return "dns"
-	case errors.Is(err, syscall.ENODEV), errors.Is(err, syscall.EPERM):
+	case errors.As(err, new(*bindError)), errors.Is(err, syscall.ENODEV):
+		// EPERM from connect is a firewall reject (tcp), not a bind failure.
 		return "iface"
 	case errors.As(err, &unknownCA), errors.As(err, &hostErr), errors.As(err, &invalid), errors.As(err, &verify):
 		return "cert"

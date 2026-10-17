@@ -3,7 +3,6 @@ package sys
 import (
 	"errors"
 	"os"
-	"path/filepath"
 	"strconv"
 	"syscall"
 )
@@ -15,11 +14,7 @@ type Lock struct{ f *os.File }
 // TryLock takes the lock without waiting; it returns nil, nil when another
 // process holds it.
 func (e *Env) TryLock(path string) (*Lock, error) {
-	real := e.P(path)
-	if err := os.MkdirAll(filepath.Dir(real), 0o755); err != nil {
-		return nil, err
-	}
-	f, err := os.OpenFile(real, os.O_RDWR|os.O_CREATE, 0o644)
+	f, err := e.OpenOwn(path, os.O_RDWR, 0o644)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +41,7 @@ func (l *Lock) Release() error {
 
 // LockHolder returns the PID holding the lock at path, or 0 if it is free.
 func (e *Env) LockHolder(path string) int {
-	f, err := os.Open(e.P(path))
+	f, err := os.OpenFile(e.P(path), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return 0
 	}

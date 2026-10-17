@@ -153,8 +153,9 @@ func TestMissed(t *testing.T) {
 	if !r.Runner.Ran("tcpdump -l -n -t -vv -s 1500 -c 20000 -i br0 udp src port 53") || r.Read(CapPID) != fmt.Sprint(systest.FakePID)+"\n" {
 		t.Fatalf("tcpdump not started: %v", r.Runner.Calls())
 	}
-	if r.Read(CapLog) != "" {
-		t.Fatal("capture not harvested")
+	// The log is left to tcpdump; the harvest remembers how far it read.
+	if got, want := r.Read(capOff), fmt.Sprint(len(tcpdumpOut))+"\n"; r.Read(CapLog) != tcpdumpOut || got != want {
+		t.Fatalf("capture offset = %q, want %q", got, want)
 	}
 	contain(t, r.Read(DNSMap), "198.51.100.5 blocked.example 192.168.1.50")
 	contain(t, r.Read(Includes), "youtube.com\ngooglevideo.com\n")
@@ -358,5 +359,36 @@ func TestPingStats(t *testing.T) {
 		if l, r := pingStats([]byte(c.out)); l != c.loss || r != c.rtt {
 			t.Errorf("%q: %s %s", c.out, l, r)
 		}
+	}
+}
+
+func TestDNSHarvestOffsetAndRotation(t *testing.T) {
+	r := newRouter(t)
+	const a = "    192.168.1.1.53 > 192.168.1.50.1: 1 q: A? a.example. 1/0/0 a.example. A 198.51.100.1 (60)\n"
+	const b = "    192.168.1.1.53 > 192.168.1.50.2: 2 q: A? b.example. 1/0/0 b.example. A 198.51.100.2 (60)\n"
+	r.Write(CapLog, a+"    192.168.1.1.53 > partial", 0o600)
+	if d := r.m.dnsHarvest(100); d["198.51.100.1"] != "a.example" {
+		t.Fatalf("first harvest: %v", d)
+	}
+	// tcpdump finishes the line and writes more; only complete lines count.
+	r.Write(CapLog, a+b, 0o600)
+	if got := r.Read(capOff); got != fmt.Sprint(len(a))+"\n" {
+		t.Fatalf("offset = %q", got)
+	}
+	r.m.dnsHarvest(200)
+	if !strings.Contains(r.Read(DNSMap), "200 198.51.100.2 b.example") || !strings.Contains(r.Read(DNSMap), "100 198.51.100.1 a.example") {
+		t.Fatalf("second harvest re-read or missed lines:\n%s", r.Read(DNSMap))
+	}
+	// A rotated log is read from the saved offset, the new one from 0.
+	r.Write(capWork, a+b+a, 0o600)
+	r.Write(CapLog, b, 0o600)
+	r.Write(capOff, fmt.Sprint(len(a+b))+"\n", 0o600)
+	r.m.dnsHarvest(300)
+	if r.Exists(capWork) || !strings.Contains(r.Read(DNSMap), "300 198.51.100.1 a.example") ||
+		!strings.Contains(r.Read(DNSMap), "300 198.51.100.2 b.example") {
+		t.Fatalf("rotation:\n%s", r.Read(DNSMap))
+	}
+	if got := r.Read(capOff); got != fmt.Sprint(len(b))+"\n" {
+		t.Fatalf("offset after rotation = %q", got)
 	}
 }

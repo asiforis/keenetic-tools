@@ -6,35 +6,72 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
-// HasMarkerLine reports whether data has a line exactly equal to marker,
-// like `grep -Fqx`. It also matches marker lines embedded in a binary.
+// HasMarkerLine reports whether data has a line equal to marker, like
+// `grep -Fqx`, ignoring a trailing CR. It also matches marker lines
+// embedded in a binary.
 func HasMarkerLine(data []byte, marker string) bool {
-	m := []byte(marker)
-	if bytes.HasPrefix(data, append(m, '\n')) || bytes.Equal(data, m) {
-		return true
+	ok, _ := hasMarkerLine(bytes.NewReader(data), marker)
+	return ok
+}
+
+// hasMarkerLine scans r line by line without holding it in memory, so a
+// multi-megabyte binary costs one buffer.
+func hasMarkerLine(r io.Reader, marker string) (bool, error) {
+	br := bufio.NewReaderSize(r, 64<<10)
+	long := false
+	for {
+		line, err := br.ReadSlice('\n')
+		if errors.Is(err, bufio.ErrBufferFull) {
+			// Too long to be the marker: skip to the next newline.
+			long = true
+			continue
+		}
+		if !long && string(bytes.TrimSuffix(bytes.TrimSuffix(line, []byte("\n")), []byte("\r"))) == marker {
+			return true, nil
+		}
+		long = false
+		if err == io.EOF {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
 	}
-	if bytes.Contains(data, append(append([]byte{'\n'}, m...), '\n')) {
-		return true
+}
+
+// FileHasMarkerLine is HasMarkerLine for a host file, streamed.
+func FileHasMarkerLine(path, marker string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
 	}
-	return bytes.HasSuffix(data, append([]byte{'\n'}, m...))
+	defer f.Close()
+	ok, err := hasMarkerLine(f, marker)
+	return err == nil && ok
 }
 
 // Owned reports whether path is a regular file (not a symlink) carrying the
 // marker line: only such files may be replaced or removed.
 func (e *Env) Owned(path, marker string) bool {
-	fi, err := os.Lstat(e.P(path))
-	if err != nil || !fi.Mode().IsRegular() {
+	f, err := os.OpenFile(e.P(path), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
 		return false
 	}
-	data, err := os.ReadFile(e.P(path))
-	return err == nil && HasMarkerLine(data, marker)
+	defer f.Close()
+	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
+		return false
+	}
+	ok, err := hasMarkerLine(f, marker)
+	return err == nil && ok
 }
 
 // Exists reports whether path exists, a dangling symlink included.
@@ -70,25 +107,88 @@ func (e *Env) Remove(path string) error {
 // WriteAtomic writes data to a temporary file next to path and renames it,
 // so a running reader keeps the old inode.
 func (e *Env) WriteAtomic(path string, data []byte, perm fs.FileMode) error {
+	return e.WriteAtomicFrom(path, bytes.NewReader(data), perm)
+}
+
+// WriteAtomicFrom is WriteAtomic with the content streamed from r.
+func (e *Env) WriteAtomicFrom(path string, r io.Reader, perm fs.FileMode) error {
 	real := e.P(path)
 	if err := os.MkdirAll(filepath.Dir(real), 0o755); err != nil {
 		return err
 	}
+	// The name is predictable: drop whatever sits there (a symlink is
+	// removed, not followed) and create it exclusively.
 	tmp := fmt.Sprintf("%s.tmp.%d", real, os.Getpid())
-	if err := os.WriteFile(tmp, data, perm); err != nil {
-		os.Remove(tmp)
+	if err := os.Remove(tmp); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	// WriteFile honours umask; set the mode explicitly.
-	if err := os.Chmod(tmp, perm); err != nil {
-		os.Remove(tmp)
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, perm)
+	if err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, real); err != nil {
-		os.Remove(tmp)
-		return err
+	_, err = io.Copy(f, r)
+	// OpenFile honours umask; set the mode explicitly.
+	if err == nil {
+		err = f.Chmod(perm)
 	}
-	return nil
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp, real)
+	}
+	if err != nil {
+		os.Remove(tmp)
+	}
+	return err
+}
+
+// OpenOwn opens path for writing without following symlinks. Anything at
+// path that is not a regular file of ours with a single link (a symlink or
+// hard link planted in a shared /tmp) is removed and created afresh, so
+// root never writes through it; a directory is an error. O_TRUNC is
+// applied only after that check.
+func (e *Env) OpenOwn(path string, flag int, perm fs.FileMode) (*os.File, error) {
+	real := e.P(path)
+	if err := os.MkdirAll(filepath.Dir(real), 0o755); err != nil {
+		return nil, err
+	}
+	trunc := flag&os.O_TRUNC != 0
+	flag = flag&^os.O_TRUNC | syscall.O_NOFOLLOW | syscall.O_NONBLOCK
+	f, err := os.OpenFile(real, flag|os.O_CREATE, perm)
+	switch {
+	case err == nil && ownFile(f):
+	case err == nil || errors.Is(err, syscall.ELOOP):
+		if f != nil {
+			f.Close()
+		}
+		if err := os.Remove(real); err != nil {
+			return nil, err
+		}
+		if f, err = os.OpenFile(real, flag|os.O_CREATE|os.O_EXCL, perm); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, err
+	}
+	if trunc {
+		if err := f.Truncate(0); err != nil {
+			f.Close()
+			return nil, err
+		}
+	}
+	return f, nil
+}
+
+// ownFile reports whether f is a regular file owned by this process's user
+// with no other names.
+func ownFile(f *os.File) bool {
+	fi, err := f.Stat()
+	if err != nil || !fi.Mode().IsRegular() {
+		return false
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	return ok && st.Nlink == 1 && int(st.Uid) == os.Geteuid()
 }
 
 // WriteInPlace truncates and rewrites an existing file, keeping its inode,

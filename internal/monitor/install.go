@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/asiforis/keenetic-tools/internal/cli"
 	"github.com/asiforis/keenetic-tools/internal/conf"
 	"github.com/asiforis/keenetic-tools/internal/crontab"
 	"github.com/asiforis/keenetic-tools/internal/markers"
@@ -51,7 +52,7 @@ func (m *M) lockWait() (func(), error) {
 		}
 		m.env.Sleep(1e9)
 	}
-	return nil, fail("Сбор (collect) не завершается: занят %s.", LockFile)
+	return nil, cli.Fail("Сбор (collect) не завершается: занят %s.", LockFile)
 }
 
 func (m *M) install(args []string) error {
@@ -60,14 +61,14 @@ func (m *M) install(args []string) error {
 		switch {
 		case args[0] == "--log-dir":
 			if len(args) < 2 {
-				return fail("--log-dir требует путь.")
+				return cli.Fail("--log-dir требует путь.")
 			}
 			dir, args = args[1], args[2:]
 		case strings.HasPrefix(args[0], "--log-dir="):
 			dir, args = strings.TrimPrefix(args[0], "--log-dir="), args[1:]
 		default:
 			m.usage()
-			return exitCode(1)
+			return cli.Exit(1)
 		}
 	}
 	if err := m.requireRoot(); err != nil {
@@ -82,7 +83,7 @@ func (m *M) install(args []string) error {
 	var cf *conf.File
 	if m.env.Exists(Conf) {
 		if !m.confOwned() {
-			return fail("%s уже существует и не принадлежит awg-monitor. Файл не изменён.", Conf)
+			return cli.Fail("%s уже существует и не принадлежит awg-monitor. Файл не изменён.", Conf)
 		}
 		data, err := m.env.ReadFile(Conf)
 		if err != nil {
@@ -106,16 +107,16 @@ func (m *M) install(args []string) error {
 		dir = strings.TrimSuffix(dir, "/")
 	}
 	if !strings.HasPrefix(dir, "/") || dir == "/" {
-		return fail("Путь к логам должен быть абсолютным: '%s'.", dir)
+		return cli.Fail("Путь к логам должен быть абсолютным: '%s'.", dir)
 	}
 	if strings.ContainsAny(dir, "'\n") {
-		return fail("Путь к логам не должен содержать кавычки и переводы строк.")
+		return cli.Fail("Путь к логам не должен содержать кавычки и переводы строк.")
 	}
 	switch fst := m.env.FSType(dir); {
 	case fst == "":
-		return fail("Не удалось определить файловую систему для %s.", dir)
+		return cli.Fail("Не удалось определить файловую систему для %s.", dir)
 	case badFS[fst]:
-		return fail("%s находится в памяти роутера (%s). Укажите каталог на внешнем диске, например /tmp/mnt/<диск>/awg-monitor.", dir, fst)
+		return cli.Fail("%s находится в памяти роутера (%s). Укажите каталог на внешнем диске, например /tmp/mnt/<диск>/awg-monitor.", dir, fst)
 	}
 
 	if err := crontab.Ensure(m.env); err != nil {
@@ -174,7 +175,7 @@ func (m *M) install(args []string) error {
 	// The first snapshot is the baseline for config_changed.
 	m.c = Defaults()
 	if err := m.loadConf(); err == nil {
-		if name, _, err := m.snapshotWrite("install"); err == nil {
+		if name, err := m.snapshotWrite("install", m.configStable()); err == nil {
 			m.say("Снимок: %s", m.path("snapshots/"+name))
 		}
 	}
@@ -188,7 +189,7 @@ func (m *M) uninstall(args []string) error {
 		purge = true
 	case len(args) > 0:
 		m.usage()
-		return exitCode(1)
+		return cli.Exit(1)
 	}
 	if err := m.requireRoot(); err != nil {
 		return err
@@ -224,7 +225,7 @@ func (m *M) uninstall(args []string) error {
 	}
 	if m.logdirOK() {
 		if purge {
-			for _, d := range []string{"samples", "domains", "missed", "dumps", "snapshots", "bundles"} {
+			for _, d := range dataDirs {
 				os.RemoveAll(m.env.P(m.path(d)))
 			}
 			for _, f := range []string{"events.log", "events.log.1", "state", "domains.state", "missed.cache", DirMarker} {
@@ -306,7 +307,7 @@ func (m *M) pkgList() string {
 // confSet changes one setting in the config, keeping everything else.
 func (m *M) confSet(key, raw string) error {
 	if !m.confOwned() {
-		return fail("Нет %s — сначала установите: keenetic-tools awg-monitor install", Conf)
+		return cli.Fail("Нет %s — сначала установите: keenetic-tools awg-monitor install", Conf)
 	}
 	data, err := m.env.ReadFile(Conf)
 	if err != nil {
@@ -326,18 +327,18 @@ func (m *M) installed() bool {
 
 func (m *M) enable(args []string) error {
 	if len(args) != 1 {
-		return fail("Укажите: awg-monitor enable collect|capture")
+		return cli.Fail("Укажите: awg-monitor enable collect|capture")
 	}
 	if err := m.requireRoot(); err != nil {
 		return err
 	}
 	if !m.installed() {
-		return fail("awg-monitor не установлен (%s). Установите: keenetic-tools awg-monitor install", selfbin.MonitorLink)
+		return cli.Fail("awg-monitor не установлен (%s). Установите: keenetic-tools awg-monitor install", selfbin.MonitorLink)
 	}
 	switch args[0] {
 	case "collect":
 		if !m.env.IsFile(crontab.Path) {
-			return fail("Не найден %s.", crontab.Path)
+			return cli.Fail("Не найден %s.", crontab.Path)
 		}
 		if err := m.updateCrontab(cronLine); err != nil {
 			return err
@@ -348,7 +349,7 @@ func (m *M) enable(args []string) error {
 		m.say("Сбор по cron включён (раз в минуту).")
 	case "capture":
 		if !m.env.Have("tcpdump") {
-			return fail("Нужен tcpdump: opkg install tcpdump")
+			return cli.Fail("Нужен tcpdump: opkg install tcpdump")
 		}
 		if err := m.requireLogdir(); err != nil {
 			return err
@@ -362,19 +363,19 @@ func (m *M) enable(args []string) error {
 			m.say("Внимание: задание cron выключено — включите: awg-monitor enable collect")
 		}
 	default:
-		return fail("Неизвестная функция '%s'. Доступно: collect, capture.", args[0])
+		return cli.Fail("Неизвестная функция '%s'. Доступно: collect, capture.", args[0])
 	}
 	return nil
 }
 
 func (m *M) disable(args []string) error {
 	if len(args) < 1 || len(args) > 2 {
-		return fail("Укажите: awg-monitor disable collect|capture [--purge]")
+		return cli.Fail("Укажите: awg-monitor disable collect|capture [--purge]")
 	}
 	purge := false
 	if len(args) == 2 {
 		if args[1] != "--purge" {
-			return fail("Неизвестный параметр '%s'.", args[1])
+			return cli.Fail("Неизвестный параметр '%s'.", args[1])
 		}
 		purge = true
 	}
@@ -384,7 +385,7 @@ func (m *M) disable(args []string) error {
 	switch args[0] {
 	case "collect":
 		if purge {
-			return fail("Для collect нет --purge: удалить всё — awg-monitor uninstall --purge")
+			return cli.Fail("Для collect нет --purge: удалить всё — awg-monitor uninstall --purge")
 		}
 		if m.env.IsFile(crontab.Path) {
 			if err := m.updateCrontab(""); err != nil {
@@ -430,7 +431,7 @@ func (m *M) disable(args []string) error {
 			m.say("tcpdump больше не нужен монитору: opkg remove tcpdump")
 		}
 	default:
-		return fail("Неизвестная функция '%s'. Доступно: collect, capture.", args[0])
+		return cli.Fail("Неизвестная функция '%s'. Доступно: collect, capture.", args[0])
 	}
 	return nil
 }
@@ -474,12 +475,15 @@ func row(m *M, k, v string) { m.say("  %s: %s", k, v) }
 
 func (m *M) status() error {
 	m.say("Установлено:")
-	if m.env.Owned(selfbin.Bin, markers.Binary) {
+	// Each check of the binary reads ~8 MB: do it once.
+	binOK, linkOK := m.env.Owned(selfbin.Bin, markers.Binary), selfbin.IsLink(m.env, selfbin.MonitorLink)
+	installed := binOK && linkOK
+	if binOK {
 		row(m, "программа", selfbin.Bin)
 	} else {
 		row(m, "программа", "нет")
 	}
-	if selfbin.IsLink(m.env, selfbin.MonitorLink) {
+	if linkOK {
 		row(m, "команда awg-monitor", selfbin.MonitorLink)
 	} else {
 		row(m, "команда awg-monitor", "нет")
@@ -547,7 +551,7 @@ func (m *M) status() error {
 	switch {
 	case m.logdirOK():
 		row(m, "каталог логов", fmt.Sprintf("%s (%s)", m.c.LogDir, m.sizeOf(m.c.LogDir)))
-		for _, d := range []string{"samples", "domains", "missed", "dumps", "snapshots", "bundles"} {
+		for _, d := range dataDirs {
 			if m.env.Exists(m.path(d)) {
 				m.say("    %s (%s)", d, m.sizeOf(m.path(d)))
 			}
@@ -570,7 +574,7 @@ func (m *M) status() error {
 
 	m.say("")
 	m.say("Управление:")
-	if !m.installed() && !m.confOwned() && !m.cronOn() && m.capPID() == 0 && len(ram) == 0 {
+	if !installed && !m.confOwned() && !m.cronOn() && m.capPID() == 0 && len(ram) == 0 {
 		m.say("  awg-monitor не установлен и ничего не запущено.")
 		m.say("  Установить: keenetic-tools awg-monitor install --log-dir DIR")
 		return nil
@@ -582,7 +586,7 @@ func (m *M) status() error {
 	}
 	if m.cronOn() {
 		m.say("  awg-monitor disable collect           — выключить весь сбор (cron), данные остаются")
-	} else if m.installed() {
+	} else if installed {
 		m.say("  awg-monitor enable collect            — включить сбор по cron")
 	}
 	m.say("  awg-monitor uninstall --purge         — удалить всё и все следы")

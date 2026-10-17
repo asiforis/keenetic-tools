@@ -11,12 +11,13 @@ import (
 	"github.com/asiforis/keenetic-tools/internal/sys"
 )
 
-// Strip drops lines that end with marker. Every kept line gets a trailing
-// newline, including a last line that had none.
+// Strip drops lines that end with marker (trailing blanks and CR ignored).
+// Every kept line gets a trailing newline, including a last line that had
+// none.
 func Strip(data []byte, marker string) []byte {
 	var out bytes.Buffer
 	for _, line := range lines(data) {
-		if strings.HasSuffix(line, marker) {
+		if managed(line, marker) {
 			continue
 		}
 		out.WriteString(line)
@@ -33,8 +34,19 @@ func lines(data []byte) []string {
 	return strings.Split(s, "\n")
 }
 
-// Has reports whether any line mentions marker (`grep -Fq`).
-func Has(data []byte, marker string) bool { return bytes.Contains(data, []byte(marker)) }
+func managed(line, marker string) bool {
+	return strings.HasSuffix(strings.TrimRight(line, " \t\r"), marker)
+}
+
+// Has reports whether a line is one that Strip would drop.
+func Has(data []byte, marker string) bool {
+	for _, line := range lines(data) {
+		if managed(line, marker) {
+			return true
+		}
+	}
+	return false
+}
 
 // Update removes our lines from the crontab at path and, if line is not
 // empty, appends it. When the content changes the old file is first copied

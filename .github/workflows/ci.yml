@@ -57,3 +57,20 @@ jobs:
           distribution: goreleaser
           version: "~> v2"
           args: check
+      # Before any tag: the release build must give the bytes `make all` gives.
+      - name: pin the toolchain from go.mod
+        run: echo "GOTOOLCHAIN=$(sed -n 's/^toolchain //p' go.mod)" >> "$GITHUB_ENV"
+      - name: tag for the snapshot version
+        run: git tag v0.0.0-ci
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: build --snapshot --clean
+      - name: goreleaser matches make
+        run: |
+          make all VERSION=v0.0.0-ci DIST=mk
+          a=$(find dist -type f -name keenetic-tools -exec sha256sum {} + | cut -d' ' -f1 | sort)
+          b=$(sha256sum mk/* | cut -d' ' -f1 | sort)
+          echo "goreleaser:"; echo "$a"; echo "make:"; echo "$b"
+          [ -n "$a" ] && [ "$a" = "$b" ]

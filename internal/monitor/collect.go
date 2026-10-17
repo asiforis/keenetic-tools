@@ -92,13 +92,16 @@ func (m *M) collect() error {
 				base = m.snapshotHash(list[len(list)-1])
 			}
 		}
-		st.Hash = m.configHash()
-		if st.Hash != base {
-			name, hash, err := m.snapshotWrite("auto")
-			if err == nil {
+		stable := m.configStable()
+		if hash := md5hex(stable); hash != base {
+			// The hash is remembered only with its snapshot, so a failed
+			// write is retried on the next check.
+			if name, err := m.snapshotWrite("auto", stable); err == nil {
 				st.Hash = hash
 				m.event("config_changed snapshot=" + name)
 			}
+		} else {
+			st.Hash = hash
 		}
 	}
 
@@ -133,7 +136,11 @@ func dashText(s, empty string) string {
 func (m *M) cleanOld() {
 	limit := time.Duration(m.c.KeepDays+1) * 24 * time.Hour
 	now := m.env.Now()
-	for _, d := range []string{"samples", "domains", "missed", "dumps", "bundles"} {
+	for _, d := range dataDirs {
+		if d == "snapshots" {
+			// Snapshots are the config history: kept until uninstall --purge.
+			continue
+		}
 		filepath.WalkDir(m.env.P(m.path(d)), func(p string, e fs.DirEntry, err error) error {
 			if err != nil || !e.Type().IsRegular() {
 				return nil

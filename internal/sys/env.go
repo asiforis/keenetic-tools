@@ -31,9 +31,34 @@ type Env struct {
 	Stderr io.Writer
 }
 
+// LocalTime is where Entware keeps the router's time zone; its glibc reads
+// it, while Go only looks at TZ and /etc/localtime.
+const LocalTime = "/opt/etc/localtime"
+
+// entwareZone returns the zone from LocalTime when TZ is not set, so stamps
+// match what Entware's `date` shows; nil keeps Go's choice.
+func entwareZone(haveTZ bool, read func(string) ([]byte, error)) *time.Location {
+	if haveTZ {
+		return nil
+	}
+	data, err := read(LocalTime)
+	if err != nil {
+		return nil
+	}
+	loc, err := time.LoadLocationFromTZData("Local", data)
+	if err != nil {
+		return nil
+	}
+	return loc
+}
+
 // New returns the Env for the real system.
 func New() *Env {
 	os.Setenv("PATH", Path)
+	_, haveTZ := os.LookupEnv("TZ")
+	if loc := entwareZone(haveTZ, os.ReadFile); loc != nil {
+		time.Local = loc
+	}
 	return &Env{
 		Run:    ExecRunner{},
 		Now:    time.Now,
@@ -61,8 +86,6 @@ type Cmd struct {
 	Stdout  io.Writer // nil: collected into Result.Output
 	Stderr  io.Writer // nil: merged into Stdout
 	Timeout time.Duration
-	// OnStart is called with the PID once the process runs.
-	OnStart func(pid int)
 }
 
 // Result is the outcome of a command.
@@ -110,9 +133,6 @@ func (ExecRunner) Run(ctx context.Context, c Cmd) Result {
 	}
 	if err := cmd.Start(); err != nil {
 		return Result{Code: -1, Err: err}
-	}
-	if c.OnStart != nil {
-		c.OnStart(cmd.Process.Pid)
 	}
 	err := cmd.Wait()
 	return Result{Output: []byte(buf.String()), Code: exitCode(cmd.ProcessState), Err: err}

@@ -6,7 +6,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -97,5 +99,16 @@ func TestIfaceAddr(t *testing.T) {
 	}
 	if ip, n := (realNet{}).IfaceAddr("nosuchdev0"); ip != "" || n != nil {
 		t.Fatal("missing device has an address")
+	}
+}
+
+func TestStageEPERM(t *testing.T) {
+	reject := &net.OpError{Op: "dial", Err: os.NewSyscallError("connect", syscall.EPERM)}
+	if got := stage(reject, true, false, false); got != "tcp" {
+		t.Errorf("firewall reject: stage %q, want tcp", got)
+	}
+	bind := &net.OpError{Op: "dial", Err: &bindError{syscall.EPERM}}
+	if got := stage(bind, true, false, false); got != "iface" {
+		t.Errorf("bind failure: stage %q, want iface", got)
 	}
 }

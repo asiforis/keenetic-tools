@@ -1,7 +1,9 @@
 package monitor
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strconv"
@@ -25,11 +27,15 @@ func (m *M) capPID() int {
 }
 
 func (m *M) capStop() {
+	m.capKill()
+	for _, f := range []string{CapPID, CapLog, capWork, capOff} {
+		m.env.Remove(f)
+	}
+}
+
+func (m *M) capKill() {
 	if pid := m.capPID(); pid != 0 {
 		m.env.Kill(pid, syscall.SIGTERM)
-	}
-	for _, f := range []string{CapPID, CapLog, CapLog + ".work"} {
-		m.env.Remove(f)
 	}
 }
 
@@ -50,17 +56,22 @@ func (m *M) size(path string) int64 {
 }
 
 // capEnsure keeps tcpdump capturing DNS answers to LAN clients; -c bounds
-// RAM if collect stops running.
+// RAM if collect stops running. A log over capMax is moved aside for the
+// harvest and a new tcpdump starts on a fresh one.
 func (m *M) capEnsure() {
 	if m.capPID() != 0 {
 		if m.size(CapLog) <= capMax {
 			return
 		}
-		m.capStop()
+		m.capKill()
+		if !m.env.Exists(capWork) {
+			os.Rename(m.env.P(CapLog), m.env.P(capWork))
+		} else {
+			m.env.Remove(CapLog)
+		}
 		m.log("захват DNS: файл вырос сверх лимита, перезапуск")
 	}
-	// Append mode: after the harvest truncates the file tcpdump writes from the start.
-	f, err := os.OpenFile(m.env.P(CapLog), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	f, err := m.env.OpenOwn(CapLog, os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return
 	}
@@ -74,6 +85,26 @@ func (m *M) capEnsure() {
 		return
 	}
 	m.env.WriteAtomic(CapPID, []byte(strconv.Itoa(pid)+"\n"), 0o644)
+}
+
+// readFrom returns the complete lines of path after offset off and the
+// offset past them; a file shorter than off was recreated and is read
+// from the start.
+func (m *M) readFrom(path string, off int64) (string, int64) {
+	f, err := os.Open(m.env.P(path))
+	if err != nil {
+		return "", 0
+	}
+	defer f.Close()
+	if fi, err := f.Stat(); err != nil || fi.Size() < off {
+		off = 0
+	}
+	data, err := io.ReadAll(io.NewSectionReader(f, off, capMax*2))
+	if err != nil {
+		return "", off
+	}
+	n := bytes.LastIndexByte(data, '\n') + 1
+	return string(data[:n]), off + int64(n)
 }
 
 // parseDNS reads tcpdump -vv lines with A answers to LAN clients and
@@ -130,16 +161,21 @@ func (m *M) dnsHarvest(now int64) map[string]string {
 			}
 		}
 	}
-	if m.size(CapLog) > 0 {
-		data, _ := m.env.ReadFile(CapLog)
-		// Truncate in place: tcpdump appends, so it continues at offset 0.
-		if f, err := os.OpenFile(m.env.P(CapLog), os.O_WRONLY|os.O_TRUNC, 0); err == nil {
-			f.Close()
-		}
-		ts := strconv.FormatInt(now, 10)
-		for _, r := range parseDNS(string(data)) {
-			recs[r[0]] = rec{ts, r[1], r[2]}
-		}
+	// The log is never truncated under tcpdump (answers written meanwhile
+	// would be lost): read what is new since the saved offset.
+	off := int64(m.env.ReadPID(capOff))
+	var text string
+	if m.env.Exists(capWork) {
+		text, _ = m.readFrom(capWork, off)
+		m.env.Remove(capWork)
+		off = 0
+	}
+	more, off := m.readFrom(CapLog, off)
+	text += more
+	m.env.WriteAtomic(capOff, []byte(strconv.FormatInt(off, 10)+"\n"), 0o600)
+	ts := strconv.FormatInt(now, 10)
+	for _, r := range parseDNS(text) {
+		recs[r[0]] = rec{ts, r[1], r[2]}
 	}
 	ips := make([]string, 0, len(recs))
 	for ip := range recs {

@@ -28,6 +28,11 @@ func TestHasMarkerLine(t *testing.T) {
 		{"a\n" + marker + " extra\n", false},
 		{"a\n  " + marker + "\n", false},
 		{"", false},
+		// Edited on Windows.
+		{marker + "\r\nLOG_DIR=x\r\n", true},
+		// A line longer than the scan buffer, then the marker.
+		{strings.Repeat("x", 200<<10) + marker + "\n" + marker + "\n", true},
+		{strings.Repeat("x", 200<<10) + marker + "\n", false},
 	}
 	for _, c := range cases {
 		if got := sys.HasMarkerLine([]byte(c.data), marker); got != c.want {
@@ -200,4 +205,55 @@ func TestExecRunnerStart(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Skip("ps printed nothing")
+}
+
+// Root writes fixed names in /tmp that other users can pre-create.
+func TestPlantedTmpFilesNotFollowed(t *testing.T) {
+	r := systest.New(t)
+	r.Write("/opt/etc/passwd", "root:x:0:0\n", 0o644)
+	target := r.P("/opt/etc/passwd")
+	for _, p := range []string{"/tmp/lock", "/tmp/log", "/tmp/state.tmp." + strconv.Itoa(os.Getpid())} {
+		if err := os.Symlink(target, r.P(p)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A hard link to a file of ours is not trusted either.
+	if err := os.Link(target, r.P("/tmp/hard")); err != nil {
+		t.Fatal(err)
+	}
+
+	l, err := r.TryLock("/tmp/lock")
+	if err != nil || l == nil {
+		t.Fatalf("TryLock: %v %v", l, err)
+	}
+	l.Release()
+	for _, p := range []string{"/tmp/log", "/tmp/hard"} {
+		f, err := r.OpenOwn(p, os.O_WRONLY|os.O_TRUNC|os.O_APPEND, 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.WriteString("x\n")
+		f.Close()
+	}
+	if err := r.WriteAtomic("/tmp/state", []byte("s\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Read("/opt/etc/passwd"); got != "root:x:0:0\n" {
+		t.Fatalf("target written through a planted link: %q", got)
+	}
+	for _, p := range []string{"/tmp/lock", "/tmp/log", "/tmp/hard"} {
+		if fi, err := os.Lstat(r.P(p)); err != nil || !fi.Mode().IsRegular() {
+			t.Fatalf("%s: %v %v", p, fi, err)
+		}
+	}
+	if r.Read("/tmp/log") != "x\n" || r.Read("/tmp/state") != "s\n" {
+		t.Fatal("content not written")
+	}
+	// An existing file of ours is reused and truncated only when asked.
+	f, _ := r.OpenOwn("/tmp/log", os.O_WRONLY|os.O_APPEND, 0o644)
+	f.WriteString("y\n")
+	f.Close()
+	if r.Read("/tmp/log") != "x\ny\n" {
+		t.Fatalf("log = %q", r.Read("/tmp/log"))
+	}
 }

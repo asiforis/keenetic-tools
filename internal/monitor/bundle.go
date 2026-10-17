@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/asiforis/keenetic-tools/internal/cli"
 )
 
 // awgKeys returns the private and preshared keys from the AWG config.
@@ -41,7 +43,7 @@ func (m *M) bundle(arg string) error {
 	if arg != "" {
 		n, err := strconv.Atoi(arg)
 		if err != nil || n <= 0 || !isNum(arg) {
-			return fail("Число дней — целое больше нуля.")
+			return cli.Fail("Число дней — целое больше нуля.")
 		}
 		days = n
 	}
@@ -114,7 +116,7 @@ func (m *M) bundle(arg string) error {
 			return err
 		}
 		if found {
-			return fail("В архив попал ключ из конфига AWG — архив удалён. Сообщите об ошибке.")
+			return cli.Fail("В архив попал ключ из конфига AWG — архив удалён. Сообщите об ошибке.")
 		}
 	}
 	if err := os.Rename(part, final); err != nil {
