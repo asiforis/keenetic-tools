@@ -27,6 +27,7 @@ awg-monitor uninstall          # логи остаются; --purge удаляе
 ```
 
 Бинарник удаляется вместе с последним компонентом. Пакеты Entware (`cron`, `curl`, `tcpdump`…) не удаляются.
+Полный список файлов и ручное удаление — [docs/artifacts.md](docs/artifacts.md).
 
 ## Команды
 
