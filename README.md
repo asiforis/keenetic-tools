@@ -63,7 +63,7 @@ opkg update && opkg install curl ca-bundle && curl -fSL https://raw.githubuserco
 
 ## Разработка
 
-Сборка — кросс-компиляция на ПК (Linux, macOS, WSL; нужны Go и make), на роутере ничего не собирается.
-Удобнее через [Task](https://taskfile.dev): `task` — список задач, `task check` — всё, что проверяет CI,
-`task deploy ROUTER=root@192.168.1.1 ARGS='awg-monitor check'` — собрать под роутер и запустить.
-Без Task — те же цели в `Makefile` (`make all`, `make verify TAG=vX.Y.Z` — сверить релиз со своей сборкой).
+Сборка — кросс-компиляция на ПК (Linux, macOS, WSL; нужны Go и [Task](https://taskfile.dev)),
+на роутере ничего не собирается. `task` — список задач, `task check` — всё, что проверяет CI,
+`task deploy ROUTER=root@192.168.1.1 ARGS='awg-monitor check'` — собрать под роутер, запустить и удалить,
+`task verify TAG=vX.Y.Z` — пересобрать релиз и сверить с его `SHA256SUMS`.

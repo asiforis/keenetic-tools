@@ -40,24 +40,22 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: make all
-      - name: size budget (8 MiB)
-        run: |
-          for f in dist/keenetic-tools-*; do
-            s=$(wc -c < "$f"); echo "$f $s"
-            [ "$s" -le 8388608 ] || { echo "$f is over budget"; exit 1; }
-          done
+      # Before GOTOOLCHAIN is pinned: task itself may need a newer Go.
+      - name: install task
+        run: GOTOOLCHAIN=auto go install github.com/go-task/task/v3/cmd/task@v3.54.0
+      # Also checks the 8 MiB size budget.
+      - run: task all
       - name: reproducible
         run: |
           sha256sum dist/* > first.sha256
-          make clean all
+          task clean all
           sha256sum -c first.sha256
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
           version: "~> v2"
           args: check
-      # Before any tag: the release build must give the bytes `make all` gives.
+      # Before any tag: the release build must give the bytes `task all` gives.
       - name: pin the toolchain from go.mod
         run: echo "GOTOOLCHAIN=$(sed -n 's/^toolchain //p' go.mod)" >> "$GITHUB_ENV"
       - name: tag for the snapshot version
@@ -67,10 +65,10 @@ jobs:
           distribution: goreleaser
           version: "~> v2"
           args: build --snapshot --clean
-      - name: goreleaser matches make
+      - name: goreleaser matches task
         run: |
-          make all VERSION=v0.0.0-ci DIST=mk
+          task all VERSION=v0.0.0-ci DIST=mk
           a=$(find dist -type f -name keenetic-tools -exec sha256sum {} + | cut -d' ' -f1 | sort)
           b=$(sha256sum mk/keenetic-tools-* | cut -d' ' -f1 | sort)
-          echo "goreleaser:"; echo "$a"; echo "make:"; echo "$b"
+          echo "goreleaser:"; echo "$a"; echo "task:"; echo "$b"
           [ -n "$a" ] && [ "$a" = "$b" ]
