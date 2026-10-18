@@ -36,11 +36,16 @@ archives:
 checksum:
   name_template: SHA256SUMS
   algorithm: sha256
+  extra_files:
+    - glob: scripts/install.sh
 
 changelog:
   use: github
   sort: asc
 
 release:
+  # The installer from the README: latest/download/install.sh.
+  extra_files:
+    - glob: scripts/install.sh
   draft: false
   prerelease: auto

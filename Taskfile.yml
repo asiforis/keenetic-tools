@@ -1,0 +1,69 @@
+# Local development: `task` lists the tasks, `task check` runs everything CI
+# runs. Builds go through make: the Makefile holds the build flags that
+# .goreleaser.yaml must match, so they are not repeated here.
+#
+#   task build ARCH=mipsel
+#   task deploy ROUTER=root@192.168.1.1 [SSH_PORT=222] [ARGS='awg-monitor check']
+#   task verify TAG=v1.0.0
+version: "3"
+
+tasks:
+  default:
+    silent: true
+    cmds:
+      - "{{.TASK_EXE}} --list"
+
+  fmt:
+    desc: Отформатировать код (gofmt -w)
+    cmds: [gofmt -w .]
+
+  lint:
+    desc: gofmt, go vet, staticcheck, синтаксис shell-скриптов, окончания строк LF
+    cmds:
+      - test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - go vet ./...
+      - go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+      - sh -n scripts/*.sh
+      - |
+        bad=$(git ls-files --eol | awk '$1 != "i/lf" && $1 != "i/none" && $1 != "i/-text"')
+        [ -z "$bad" ] || { echo "$bad"; exit 1; }
+
+  test:
+    desc: Тесты на фейковом роутере
+    cmds: [go test ./...]
+
+  race:
+    desc: Тесты с -race (нужен C-компилятор)
+    cmds: [go test -race ./...]
+
+  build:
+    desc: Собрать одну архитектуру (ARCH=mipsel|mips|aarch64|armv7)
+    cmds:
+      - make build ARCH={{.ARCH}}
+
+  all:
+    desc: Собрать все архитектуры и install.sh в dist/ (≤ 8 МиБ каждый)
+    cmds:
+      - make all
+      - for f in dist/keenetic-tools-*; do [ "$(wc -c < "$f")" -le 8388608 ] || { echo "$f больше 8 МиБ"; exit 1; }; done
+
+  check:
+    desc: Всё, что проверяет CI
+    cmds:
+      - task: lint
+      - task: test
+      - task: all
+
+  deploy:
+    desc: Собрать под архитектуру роутера, загрузить и запустить (ROUTER=root@АДРЕС, ARGS, SSH_PORT)
+    cmds:
+      - make deploy ROUTER={{.ROUTER}} {{if .SSH_PORT}}SSH_PORT={{.SSH_PORT}}{{end}} {{if .ARGS}}ARGS={{shellQuote .ARGS}}{{end}}
+
+  verify:
+    desc: Пересобрать релиз TAG=vX.Y.Z и сверить с его SHA256SUMS
+    cmds:
+      - make verify TAG={{.TAG}}
+
+  clean:
+    desc: Удалить dist/
+    cmds: [make clean]

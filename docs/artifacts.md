@@ -1,13 +1,13 @@
 # Что keenetic-tools создаёт на роутере
 
 Список всего, что появляется на роутере, — чтобы при необходимости удалить вручную.
-Обычно хватает `keenetic-tools awg-cron uninstall` и `awg-monitor uninstall --purge`.
+Обычно хватает `install.sh uninstall` (см. README) — он удаляет всё из списка ниже, кроме пакетов Entware.
 
 ## Общее
 
 | Путь | Что это | Кто создаёт |
 |------|---------|-------------|
-| `/opt/keenetic-tools.part` | скачанный бинарник (однострочник из README) | вы; `awg-monitor uninstall` удаляет |
+| `/opt/bin/keenetic-tools.part` | недокачанный бинарник, если `install.sh` прервали | `install.sh`; удаляет он же |
 | `/opt/bin/keenetic-tools` | установленный бинарник | `install` любого компонента |
 | строки в `/opt/etc/crontab` с `# keenetic-tools: ...` | задания cron | `install` |
 | пакет `cron` (`/opt/etc/init.d/S10cron`) | ставится через `opkg`, если его нет | `install` |
@@ -60,7 +60,7 @@ kill $(cat /tmp/awg-monitor.dns.pid) 2>/dev/null
 grep '^LOG_DIR=' /opt/etc/awg-monitor.conf
 rm -rf 'ЗНАЧЕНИЕ_LOG_DIR'
 # файлы
-rm -f /opt/bin/awg-monitor /opt/bin/keenetic-tools /opt/keenetic-tools.part /opt/etc/awg-monitor.conf
+rm -f /opt/bin/awg-monitor /opt/bin/keenetic-tools /opt/bin/keenetic-tools.part /opt/etc/awg-monitor.conf
 rm -f /opt/etc/crontab.awg-backup.* /opt/etc/crontab.awg-monitor-backup.*
 rm -f /tmp/awg-restart.* /tmp/awg-monitor.*
 # пакеты, если не нужны другим программам

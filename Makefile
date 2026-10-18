@@ -2,7 +2,7 @@
 # a Keenetic router over SSH. Nothing is compiled on the router.
 #
 #   make build ARCH=mipsel            one architecture -> dist/$(CMD)-$(ARCH)
-#   make all                          every architecture
+#   make all                          every architecture + install.sh -> dist/
 #   make deploy ROUTER=root@192.168.1.1 [ARGS='...']
 #                                     detect router arch, build, upload, run
 #   make test                         go vet + go test
@@ -52,8 +52,10 @@ build:
 	    -o $(DIST)/$(CMD)-$$arch ./cmd/$(CMD); \
 	echo "$(DIST)/$(CMD)-$$arch ($$(wc -c < $(DIST)/$(CMD)-$$arch) байт)"
 
+# install.sh is a release file too (listed in SHA256SUMS).
 all:
 	@for a in $(ARCHES); do $(MAKE) --no-print-directory build ARCH=$$a || exit 1; done
+	@cp scripts/install.sh $(DIST)/install.sh
 
 deploy:
 	@test -n "$(ROUTER)" || { echo 'Укажите ROUTER=root@АДРЕС_РОУТЕРА' >&2; exit 1; }

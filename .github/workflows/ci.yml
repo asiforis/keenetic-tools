@@ -43,7 +43,7 @@ jobs:
       - run: make all
       - name: size budget (8 MiB)
         run: |
-          for f in dist/*; do
+          for f in dist/keenetic-tools-*; do
             s=$(wc -c < "$f"); echo "$f $s"
             [ "$s" -le 8388608 ] || { echo "$f is over budget"; exit 1; }
           done
@@ -71,6 +71,6 @@ jobs:
         run: |
           make all VERSION=v0.0.0-ci DIST=mk
           a=$(find dist -type f -name keenetic-tools -exec sha256sum {} + | cut -d' ' -f1 | sort)
-          b=$(sha256sum mk/* | cut -d' ' -f1 | sort)
+          b=$(sha256sum mk/keenetic-tools-* | cut -d' ' -f1 | sort)
           echo "goreleaser:"; echo "$a"; echo "make:"; echo "$b"
           [ -n "$a" ] && [ "$a" = "$b" ]

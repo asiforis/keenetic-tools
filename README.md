@@ -6,27 +6,29 @@
 ## Установка
 
 ```sh
-opkg update && opkg install curl ca-bundle && A=$(opkg print-architecture | sed -n 's/^arch \([a-z0-9]*\)-k\{0,1\}[0-9].*/\1/p' | sed 's/sf$//' | head -n 1) && echo "Архитектура: $A" && curl -fSL "https://github.com/asiforis/keenetic-tools/releases/latest/download/keenetic-tools-$A" -o /opt/keenetic-tools.part && chmod 755 /opt/keenetic-tools.part && /opt/keenetic-tools.part version
+opkg update && opkg install curl ca-bundle
+curl -fsSL https://github.com/asiforis/keenetic-tools/releases/latest/download/install.sh | sh
 ```
 
-Затем установить нужное (бинарник скопирует себя в `/opt/bin/keenetic-tools`):
+`install.sh` определяет архитектуру роутера, скачивает бинарник последнего релиза, сверяет его
+с `SHA256SUMS` и ставит в `/opt/bin/keenetic-tools`. Затем — нужные компоненты:
 
 ```sh
-/opt/keenetic-tools.part awg-cron install                                         # перезапуск по cron
-/opt/keenetic-tools.part awg-monitor install --log-dir /tmp/mnt/HDD/awg-monitor  # мониторинг, логи на внешний диск
-rm -f /opt/keenetic-tools.part
+keenetic-tools awg-cron install                                  # перезапуск туннеля по cron
+keenetic-tools awg-monitor install --log-dir /tmp/mnt/HDD/awg-monitor   # мониторинг, логи на внешний диск
 ```
 
-Обновление — те же шаги; настройки, логи и расписание сохраняются.
+Обновление — снова `install.sh`; настройки, логи и расписание сохраняются.
 
 ## Удаление
 
 ```sh
-keenetic-tools awg-cron uninstall
-awg-monitor uninstall          # логи остаются; --purge удаляет всё
+curl -fsSL https://github.com/asiforis/keenetic-tools/releases/latest/download/install.sh | sh -s -- uninstall
 ```
 
-Бинарник удаляется вместе с последним компонентом. Пакеты Entware (`cron`, `curl`, `tcpdump`…) не удаляются.
+Удаляет всё, что создал keenetic-tools: задания cron, бинарник, конфиг, логи, резервные копии
+crontab, файлы в `/tmp`. Чужие задания cron и пакеты Entware (`cron`, `curl`, `tcpdump`…) не трогает.
+По одному компоненту: `keenetic-tools awg-cron uninstall`, `awg-monitor uninstall [--purge]`.
 Полный список файлов и ручное удаление — [docs/artifacts.md](docs/artifacts.md).
 
 ## Команды
@@ -58,3 +60,10 @@ awg-monitor uninstall          # логи остаются; --purge удаляе
 ```sh
 opkg update && opkg install curl ca-bundle && curl -fSL https://raw.githubusercontent.com/asiforis/keenetic-tools/main/scripts/add-ssh-user.sh -o /opt/add-ssh-user.sh.part && mv /opt/add-ssh-user.sh.part /opt/add-ssh-user.sh && sh /opt/add-ssh-user.sh admin
 ```
+
+## Разработка
+
+Сборка — кросс-компиляция на ПК (Linux, macOS, WSL; нужны Go и make), на роутере ничего не собирается.
+Удобнее через [Task](https://taskfile.dev): `task` — список задач, `task check` — всё, что проверяет CI,
+`task deploy ROUTER=root@192.168.1.1 ARGS='awg-monitor check'` — собрать под роутер и запустить.
+Без Task — те же цели в `Makefile` (`make all`, `make verify TAG=vX.Y.Z` — сверить релиз со своей сборкой).

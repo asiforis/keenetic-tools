@@ -13,7 +13,7 @@
   соединений мимо туннеля.
 
 Бинарник исполняется **только на роутере** (под root), собирается кросс-компиляцией на ПК.
-Пользователь ставит его из **GitHub Releases** по однострочнику из `README.md`; релиз — это тег
+Пользователь ставит его из **GitHub Releases** через `scripts/install.sh` (тоже файл релиза); релиз — это тег
 `v*` (GoReleaser в `.github/workflows/release.yml`). Push в `main` релизом не является, но
 README в `main` должен описывать последний релиз.
 
@@ -31,9 +31,11 @@ README в `main` должен описывать последний релиз.
 | `internal/selfbin/` | установка себя в `/opt/bin/keenetic-tools`, симлинк `/opt/bin/awg-monitor` |
 | `internal/awgcron/` | `awg-cron` |
 | `internal/monitor/` | `awg-monitor`: замер (`probe.go`), сбор (`collect.go`), снимки и diff, домены, маршрутизация, захват DNS, отчёты, bundle, установка |
-| `Makefile` | `build`/`all`/`deploy`/`test`/`verify`/`clean` |
+| `Makefile` | `build`/`all`/`deploy`/`test`/`verify`/`clean`; единственное место флагов сборки |
+| `Taskfile.yml` | локальная разработка (`task check` = проверки CI); сборку делегирует `make` |
 | `.goreleaser.yaml` | релизная сборка; флаги совпадают с `Makefile` (иначе `make verify` не сойдётся) |
 | `docs/go-migration.md` | решения и история перехода с shell на Go |
+| `scripts/install.sh` | установка/обновление бинарника (архитектура, `SHA256SUMS`) и `uninstall` всего, что создаёт keenetic-tools. Публикуется в релизе (`latest/download/install.sh`) и входит в `SHA256SUMS`; краткий, только POSIX sh. Новый файл на роутере — добавить его удаление сюда и в `docs/artifacts.md` |
 | `scripts/add-ssh-user.sh` | Разовая shell-утилита (не часть бинарника): пользователь со входом по SSH-ключу (ключи из `/opt/root/.ssh/authorized_keys`) и правом `sudo`. Правит `/opt/etc/passwd`, `group`, `sudoers` с бэкапами `*.bak-adduser`, идемпотентна. Скачивается напрямую из `main`, поэтому push в `main` для неё — релиз; только POSIX sh (BusyBox ash). |
 
 ## Раскладка на роутере
@@ -103,7 +105,8 @@ gofmt -l .                     # пусто
 go vet ./...
 go run honnef.co/go/tools/cmd/staticcheck@latest ./...
 go test ./...                  # в CI ещё -race
-make all                       # 4 архитектуры, размер ≤ 8 МиБ
+make all                       # 4 архитектуры + install.sh, размер ≤ 8 МиБ
+# или всё сразу: task check
 sh -n scripts/*.sh             # синтаксис shell-утилит
 git ls-files --eol             # везде lf
 ```
