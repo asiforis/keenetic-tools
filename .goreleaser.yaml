@@ -1,5 +1,5 @@
-# Release build: the same binaries as `make all` (see Makefile), so anyone can
-# rebuild a tag and compare hashes with `make verify TAG=...`.
+# Release build: the same binaries as `task all` (see Taskfile.yml), so anyone
+# can rebuild a tag and compare hashes with `task verify TAG=...`.
 version: 2
 
 project_name: keenetic-tools
@@ -13,7 +13,7 @@ builds:
     flags:
       - -trimpath
       - -buildvcs=false
-    # Must match LDFLAGS in the Makefile; the version is the tag with its "v".
+    # Must match LDFLAGS in Taskfile.yml; the version is the tag with its "v".
     ldflags:
       - -s -w -buildid= -X main.version={{ .Tag }}
     mod_timestamp: "{{ .CommitTimestamp }}"
@@ -36,11 +36,16 @@ archives:
 checksum:
   name_template: SHA256SUMS
   algorithm: sha256
+  extra_files:
+    - glob: scripts/install.sh
 
 changelog:
   use: github
   sort: asc
 
 release:
+  # The installer from the README: latest/download/install.sh.
+  extra_files:
+    - glob: scripts/install.sh
   draft: false
   prerelease: auto

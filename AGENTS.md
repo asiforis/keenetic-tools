@@ -13,7 +13,7 @@
   соединений мимо туннеля.
 
 Бинарник исполняется **только на роутере** (под root), собирается кросс-компиляцией на ПК.
-Пользователь ставит его из **GitHub Releases** по однострочнику из `README.md`; релиз — это тег
+Пользователь ставит его из **GitHub Releases** через `scripts/install.sh` (тоже файл релиза); релиз — это тег
 `v*` (GoReleaser в `.github/workflows/release.yml`). Push в `main` релизом не является, но
 README в `main` должен описывать последний релиз.
 
@@ -31,9 +31,9 @@ README в `main` должен описывать последний релиз.
 | `internal/selfbin/` | установка себя в `/opt/bin/keenetic-tools`, симлинк `/opt/bin/awg-monitor` |
 | `internal/awgcron/` | `awg-cron` |
 | `internal/monitor/` | `awg-monitor`: замер (`probe.go`), сбор (`collect.go`), снимки и diff, домены, маршрутизация, захват DNS, отчёты, bundle, установка |
-| `Makefile` | `build`/`all`/`deploy`/`test`/`verify`/`clean` |
-| `.goreleaser.yaml` | релизная сборка; флаги совпадают с `Makefile` (иначе `make verify` не сойдётся) |
-| `docs/go-migration.md` | решения и история перехода с shell на Go |
+| `Taskfile.yml` | сборка и разработка: `build`/`all`/`deploy`/`verify`/`check`/`lint`/`test`/`race`; единственное место флагов сборки, кроме `.goreleaser.yaml` |
+| `.goreleaser.yaml` | релизная сборка; флаги совпадают с `Taskfile.yml` (иначе `task verify` не сойдётся) |
+| `scripts/install.sh` | установка/обновление бинарника (архитектура, `SHA256SUMS`) и `uninstall` всего, что создаёт keenetic-tools. Публикуется в релизе (`latest/download/install.sh`) и входит в `SHA256SUMS`; краткий, только POSIX sh. Новый файл на роутере — добавить его удаление сюда и в `docs/artifacts.md` |
 | `scripts/add-ssh-user.sh` | Разовая shell-утилита (не часть бинарника): пользователь со входом по SSH-ключу (ключи из `/opt/root/.ssh/authorized_keys`) и правом `sudo`. Правит `/opt/etc/passwd`, `group`, `sudoers` с бэкапами `*.bak-adduser`, идемпотентна. Скачивается напрямую из `main`, поэтому push в `main` для неё — релиз; только POSIX sh (BusyBox ash). |
 
 ## Раскладка на роутере
@@ -79,7 +79,7 @@ README в `main` должен описывать последний релиз.
 4. Сообщения пользователю — **на русском**; комментарии в коде — на английском, коротко.
 5. Не менять маркеры (`internal/markers`) и строки crontab — по ним находятся установленные копии.
 6. При изменении CLI/поведения обновить `usage()` и `README.md`.
-7. Флаги сборки в `Makefile` и `.goreleaser.yaml` должны совпадать; версия Go — строка `toolchain`
+7. Флаги сборки в `Taskfile.yml` и `.goreleaser.yaml` должны совпадать; версия Go — строка `toolchain`
    в `go.mod`.
 8. Окончания строк — **LF** (`.gitattributes`). Репо лежит на Windows-ФС — не допускать CRLF.
 9. **Shell-версия (`install-awg-cron.sh`, `awg-monitor.sh`, `awg-restart`) нигде не
@@ -99,11 +99,12 @@ README в `main` должен описывать последний релиз.
 на фейковом роутере (`internal/sys/systest`):
 
 ```sh
+task check                     # всё ниже, кроме -race
 gofmt -l .                     # пусто
 go vet ./...
 go run honnef.co/go/tools/cmd/staticcheck@latest ./...
-go test ./...                  # в CI ещё -race
-make all                       # 4 архитектуры, размер ≤ 8 МиБ
+go test ./...                  # в CI ещё -race (task race)
+task all                       # 4 архитектуры + install.sh, размер ≤ 8 МиБ
 sh -n scripts/*.sh             # синтаксис shell-утилит
 git ls-files --eol             # везде lf
 ```
@@ -114,5 +115,5 @@ git ls-files --eol             # везде lf
 ## Git
 
 - Ветка по умолчанию — `main`; GitHub: `asiforis/keenetic-tools`.
-- Релиз: тег `vX.Y.Z` → GoReleaser публикует бинарники и `SHA256SUMS`, затем workflow сверяет их с `make all`.
+- Релиз: тег `vX.Y.Z` → GoReleaser публикует бинарники и `SHA256SUMS`, затем workflow сверяет их с `task all`.
 - Не коммитить секреты, бэкапы и логи роутера (см. `.gitignore`).

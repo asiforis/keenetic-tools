@@ -1,0 +1,134 @@
+# Cross-build keenetic-tools on a workstation (Linux, macOS, WSL) and deploy
+# to a Keenetic router over SSH. Nothing is compiled on the router.
+# `task` lists the tasks; `task check` runs what CI runs.
+#
+#   task build ARCH=mipsel
+#   task deploy ROUTER=root@192.168.1.1 [SSH_PORT=222] [ARGS='awg-monitor check']
+#   task verify TAG=v1.0.0
+version: "3"
+silent: true
+
+vars:
+  # Names follow Entware (opkg print-architecture) without the "sf" suffix.
+  ARCHES: mipsel mips aarch64 armv7
+  DIST: dist
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+  REPO: asiforis/keenetic-tools
+  # Must match .goreleaser.yaml so release builds can be reproduced.
+  BUILD_FLAGS: -trimpath -buildvcs=false
+  LDFLAGS: -s -w -buildid= -X main.version={{.VERSION}}
+
+env:
+  CGO_ENABLED: "0"
+  # The exact toolchain from go.mod: another Go version gives different bytes.
+  GOTOOLCHAIN:
+    sh: sed -n 's/^toolchain //p' go.mod
+
+tasks:
+  default:
+    silent: true
+    cmds:
+      - "{{.TASK_EXE}} --list"
+
+  fmt:
+    desc: Отформатировать код (gofmt -w)
+    cmds: [gofmt -w .]
+
+  lint:
+    desc: gofmt, go vet, staticcheck, синтаксис shell-скриптов, окончания строк LF
+    cmds:
+      - test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - go vet ./...
+      - go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+      - sh -n scripts/*.sh
+      - |
+        bad=$(git ls-files --eol | awk '$1 != "i/lf" && $1 != "i/none" && $1 != "i/-text"')
+        [ -z "$bad" ] || { echo "$bad"; exit 1; }
+
+  test:
+    desc: Тесты на фейковом роутере
+    cmds: [go test ./...]
+
+  race:
+    desc: Тесты с -race (нужен C-компилятор)
+    env: {CGO_ENABLED: "1"}
+    cmds: [go test -race ./...]
+
+  build:
+    desc: Собрать одну архитектуру (ARCH=mipsel|mips|aarch64|armv7) в dist/
+    requires: {vars: [ARCH]}
+    vars:
+      A: '{{trimSuffix "sf" .ARCH}}'
+    cmds:
+      - |
+        case "{{.A}}" in
+          mipsel) set -- GOARCH=mipsle GOMIPS=softfloat ;;
+          mips) set -- GOARCH=mips GOMIPS=softfloat ;;
+          aarch64) set -- GOARCH=arm64 ;;
+          armv7) set -- GOARCH=arm GOARM=5 ;;
+          *) echo "Неизвестная архитектура '{{.ARCH}}'. Поддерживаются: {{.ARCHES}}" >&2; exit 1 ;;
+        esac
+        mkdir -p "{{.DIST}}"
+        env GOOS=linux "$@" go build {{.BUILD_FLAGS}} -ldflags '{{.LDFLAGS}}' \
+          -o "{{.DIST}}/keenetic-tools-{{.A}}" ./cmd/keenetic-tools
+        echo "{{.DIST}}/keenetic-tools-{{.A}} ($(wc -c < "{{.DIST}}/keenetic-tools-{{.A}}") байт)"
+
+  all:
+    desc: Все архитектуры и install.sh в dist/ (бинарники ≤ 8 МиБ)
+    cmds:
+      - for: {var: ARCHES}
+        task: build
+        vars: {ARCH: "{{.ITEM}}", DIST: "{{.DIST}}", VERSION: "{{.VERSION}}"}
+      # install.sh is a release file too (listed in SHA256SUMS).
+      - cp scripts/install.sh "{{.DIST}}/install.sh"
+      - |
+        for f in "{{.DIST}}"/keenetic-tools-*; do
+          [ "$(wc -c < "$f")" -le 8388608 ] || { echo "$f больше 8 МиБ" >&2; exit 1; }
+        done
+
+  check:
+    desc: Всё, что проверяет CI (кроме -race)
+    cmds:
+      - task: lint
+      - task: test
+      - task: all
+
+  deploy:
+    desc: Собрать под архитектуру роутера, загрузить в /opt/keenetic-tools.part, запустить ARGS (по умолчанию version) и удалить
+    requires: {vars: [ROUTER]}
+    vars:
+      SSH_PORT: '{{.SSH_PORT | default "22"}}'
+      ARGS: '{{.ARGS | default "version"}}'
+    cmds:
+      # One SSH connection for all steps: a single password prompt without keys.
+      - |
+        ssh="ssh -p {{.SSH_PORT}} -o ControlMaster=auto -o ControlPath=/tmp/kt-ssh-%C -o ControlPersist=60"
+        out=$($ssh {{.ROUTER}} /opt/bin/opkg print-architecture)
+        arch=$(printf '%s\n' "$out" | sed -n 's/^arch \([a-z0-9]*\)-k\{0,1\}[0-9].*/\1/p' | sed 's/sf$//' | head -n 1)
+        [ -n "$arch" ] || { printf 'Не удалось определить архитектуру роутера:\n%s\n' "$out" >&2; exit 1; }
+        echo "Архитектура роутера: $arch"
+        "{{.TASK_EXE}}" build ARCH="$arch" DIST="{{.DIST}}"
+        $ssh {{.ROUTER}} 'cat > /opt/keenetic-tools.part && chmod 755 /opt/keenetic-tools.part' < "{{.DIST}}/keenetic-tools-$arch"
+        echo "Запуск на роутере: /opt/keenetic-tools.part {{.ARGS}}"
+        $ssh {{.ROUTER}} '/opt/keenetic-tools.part {{.ARGS}}; s=$?; rm -f /opt/keenetic-tools.part; exit $s'
+
+  verify:
+    desc: Пересобрать релиз TAG=vX.Y.Z из чистого worktree и сверить с его SHA256SUMS
+    requires: {vars: [TAG]}
+    vars:
+      TMP: {sh: mktemp -d}
+    cmds:
+      - defer: git worktree remove --force "{{.TMP}}/src" >/dev/null 2>&1; rm -rf "{{.TMP}}"
+      - git worktree add --detach "{{.TMP}}/src" "{{.TAG}}" >/dev/null 2>&1
+      - '"{{.TASK_EXE}}" -d "{{.TMP}}/src" all VERSION="{{.TAG}}" DIST="{{.TMP}}/dist"'
+      - curl -fsSL "https://github.com/{{.REPO}}/releases/download/{{.TAG}}/SHA256SUMS" -o "{{.TMP}}/SHA256SUMS"
+      - |
+        cd "{{.TMP}}/dist"
+        if command -v sha256sum >/dev/null 2>&1; then sha256sum -c ../SHA256SUMS; else shasum -a 256 -c ../SHA256SUMS; fi
+        echo "{{.TAG}}: сборка из исходников совпадает с релизом"
+
+  clean:
+    desc: Удалить dist/
+    cmds:
+      - rm -rf "{{.DIST}}"
