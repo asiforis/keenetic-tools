@@ -8,18 +8,22 @@
 он перезапускает туннель.
 
 **Что не меняется:** конфигурация Keenetic, маршруты, туннель. Инструмент только читает
-`ndmc show ...`. В `/opt/etc/crontab` добавляется одна строка.
+`ndmc show ...`. На этом роутере нет `cron`: установщик поставит пакет `cron`, и в новом
+`/opt/etc/crontab` появится одна строка. Исходное состояние роутера и полный откат описаны в
+[baseline.md](baseline.md).
 
 **Статусы шагов:** ⬜ не начат · 🔄 в работе · ✅ готово · ⛔ остановлен. Статус и заметки
 обновляются прямо в этом файле по ходу эксперимента.
 
 **Обозначения в скриптах:**
-- `[ПК]` — команды в терминале в каталоге репозитория (WSL);
-- `[роутер]` — команды в SSH-сессии на роутере, в shell Entware под root;
-- `ROUTER` и `DISK` — подставьте свои значения один раз в начале каждого скрипта.
+- `[ПК]` — команды в терминале в каталоге репозитория (WSL). Нужны только в шаге 2 (собрать
+  и загрузить бинарник) и в шаге 11 (забрать результаты);
+- `[роутер]` — всё остальное: SSH-сессия `ssh admin@192.168.1.1`, затем `sudo -i`, то есть
+  shell Entware под root.
 
-Все файлы эксперимента лежат в `$DISK/kt-experiment/`, отдельно от логов монитора. Поэтому
-`uninstall --purge` их не удалит: удаляет их шаг 11.
+`/opt` на этом роутере — USB-диск (ext4), поэтому логи монитора лежат в каталоге по умолчанию
+`/opt/var/log/awg-monitor`. Файлы эксперимента — в `/opt/kt-experiment/`, отдельно от логов
+монитора. Поэтому `uninstall --purge` их не удалит: удаляет их шаг 11.
 
 ---
 
@@ -27,60 +31,65 @@
 
 **Статус:** ⬜ не начат · **Дата:** — · **Заметки:** —
 
+Сначала выполнить раздел «Бэкап перед установкой» из [baseline.md](baseline.md): он сохраняет
+`/opt/etc`, список пакетов и `init.d` в `/opt/root/kt-before`. Затем:
+
 ```sh
-DISK=/tmp/mnt/<диск>
-mkdir -p $DISK/kt-experiment && cd $DISK/kt-experiment
-{ date; df -T /opt $DISK; free; uptime
+mkdir -p /opt/kt-experiment && cd /opt/kt-experiment
+{ date; df -T /opt; free; uptime
   echo '--- пакеты'; opkg list-installed | grep -E '^(cron|tcpdump) '
   echo '--- init.d'; ls /opt/etc/init.d/; } | tee before.txt
-cp /opt/etc/crontab crontab.before
 ```
 
-**Что происходит:** на диск записываются исходные значения: файловые системы, память, нагрузка,
-какие из пакетов `cron` и `tcpdump` уже стоят. Ещё сохраняется копия crontab. По этим
-файлам шаг 11 вернёт всё как было.
+**Что происходит:** на диск записываются исходные значения: файловая система, память, нагрузка,
+какие из пакетов `cron` и `tcpdump` уже стоят. По этим файлам шаги 7 и 11 сравнивают
+нагрузку и возвращают всё как было.
 
-**Проверить:** у `$DISK` в колонке Type стоит `ext4`/`ext3`/`ntfs`/`exfat`/`vfat`, а не `tmpfs`
-или `ubifs`. В `init.d` есть `S52awg-opkgtun0`.
+**Проверить:** у `/opt` в колонке Type стоит `ext4`. В `init.d` есть `S52awg-opkgtun0`. По
+[baseline.md](baseline.md) ожидается: `tcpdump` есть, `cron` нет.
 
 ---
 
-## 2. Пробный запуск без установки `[ПК]`
+## 2. Собрать и загрузить бинарник `[ПК]`
 
 **Статус:** ⬜ не начат · **Дата:** — · **Заметки:** —
 
 ```sh
-ROUTER=root@192.168.1.1
-task deploy ROUTER=$ROUTER ARGS='awg-monitor check'
-task deploy ROUTER=$ROUTER ARGS='awg-monitor route-check youtube.com'
+task build ARCH=aarch64
+sha256sum dist/keenetic-tools-aarch64
+scp dist/keenetic-tools-aarch64 admin@192.168.1.1:/tmp/keenetic-tools
 ```
 
-**Что происходит:** бинарник собирается под архитектуру роутера, загружается в
-`/opt/keenetic-tools.part`, выполняет одну команду и сразу удаляется. После этого на роутере
-ничего не остаётся. `check` делает один замер туннеля. `route-check` показывает, покрыт ли
-домен списком и куда идут текущие соединения к нему.
+**Что происходит:** бинарник собирается под `aarch64` (это архитектура роутера, см.
+[baseline.md](baseline.md)) и копируется в `/tmp` роутера (RAM). Под `root` по ключу роутер не
+пускает, поэтому файл загружается под `admin`. Релизов пока нет, поэтому `install.sh` из
+README не подходит.
 
-**Проверить:** `check` выводит `Состояние: OK` и интерфейс `opkgtun0`; `route-check` находит
-группы с маршрутом в туннель. Если нет — дальше не идти: сначала поправить `IFACE`/`NDM_IFACE`.
+**Проверить:** запомнить хэш из `sha256sum`, он понадобится в шаге 3.
 
 ---
 
-## 3. Загрузить бинарник на роутер `[ПК]`
+## 3. Пробный запуск без установки `[роутер]`
 
 **Статус:** ⬜ не начат · **Дата:** — · **Заметки:** —
 
 ```sh
-ROUTER=root@192.168.1.1
-ARCH=$(ssh $ROUTER /opt/bin/opkg print-architecture | sed -n 's/^arch \([a-z0-9]*\)-k\{0,1\}[0-9].*/\1/p' | sed 's/sf$//' | head -n 1)
-echo "Архитектура: $ARCH"
-task build ARCH=$ARCH
-ssh $ROUTER 'cat > /opt/keenetic-tools.part && chmod 755 /opt/keenetic-tools.part' < dist/keenetic-tools-$ARCH
+cp /tmp/keenetic-tools /opt/keenetic-tools.part && rm /tmp/keenetic-tools
+chmod 755 /opt/keenetic-tools.part
+sha256sum /opt/keenetic-tools.part
+/opt/keenetic-tools.part version
+/opt/keenetic-tools.part awg-monitor check
+/opt/keenetic-tools.part awg-monitor route-check youtube.com
 ```
 
-**Что происходит:** то же, что в шаге 2, но файл остаётся на роутере для установки.
-Релизов пока нет, поэтому `install.sh` из README не подходит.
+**Что происходит:** бинарник переносится из общего `/tmp` в `/opt` под root, чтобы другой
+пользователь не мог подменить его между проверкой и установкой. `check` делает один замер
+туннеля, `route-check` показывает, покрыт ли домен списком и куда идут текущие соединения к
+нему. Обе команды только читают и ничего не пишут.
 
-**Проверить:** на роутере `/opt/keenetic-tools.part version` выводит версию.
+**Проверить:** хэш совпадает с шагом 2. `check` выводит `Состояние: OK` и интерфейс
+`opkgtun0`; `route-check` находит группы с маршрутом в туннель. Если нет, дальше не идти:
+сначала поправить `IFACE`/`NDM_IFACE`. Откатить этот шаг — `rm /opt/keenetic-tools.part`.
 
 ---
 
@@ -89,14 +98,15 @@ ssh $ROUTER 'cat > /opt/keenetic-tools.part && chmod 755 /opt/keenetic-tools.par
 **Статус:** ⬜ не начат · **Дата:** — · **Заметки:** —
 
 ```sh
-DISK=/tmp/mnt/<диск>
-/opt/keenetic-tools.part awg-monitor install --log-dir $DISK/awg-monitor && rm /opt/keenetic-tools.part
+/opt/keenetic-tools.part awg-monitor install && rm /opt/keenetic-tools.part
 ```
 
 **Что происходит:**
 - бинарник копируется в `/opt/bin/keenetic-tools`, создаётся симлинк `/opt/bin/awg-monitor`;
-- создаётся конфиг `/opt/etc/awg-monitor.conf` и каталог логов с файлом-маркером;
-- если пакета `cron` нет, он ставится через `opkg`;
+- создаётся конфиг `/opt/etc/awg-monitor.conf` и каталог логов `/opt/var/log/awg-monitor` с
+  файлом-маркером;
+- пакета `cron` нет, поэтому выполняются `opkg update` и `opkg install cron`: появляются
+  `S10cron`, `/opt/etc/crontab` и запущенный `crond`;
 - в crontab добавляется строка сбора (перед этим делается бэкап), cron перезапускается;
 - снимается первый снимок конфигурации.
 
@@ -131,12 +141,11 @@ uptime; free | head -2
 **Статус:** ⬜ не начат · **Дата:** — · **Заметки:** —
 
 ```sh
-opkg install tcpdump
 awg-monitor enable capture
 ```
 
 **Что происходит:**
-- ставится `tcpdump`, в конфиге включается `DNS_CAPTURE=1`;
+- в конфиге включается `DNS_CAPTURE=1` (`tcpdump` уже установлен, см. [baseline.md](baseline.md));
 - при следующем сборе (в течение минуты) запускается фоновый
   `tcpdump -i br0 'udp src port 53'`: он слушает только ответы DNS роутера клиентам;
 - раз в минуту сбор разбирает пойманные ответы в `/tmp/awg-monitor.dnsmap` (домен → IP → устройство,
@@ -153,11 +162,10 @@ awg-monitor enable capture
 **Статус:** ⬜ не начат · **Дата:** — · **Заметки:** —
 
 ```sh
-DISK=/tmp/mnt/<диск>
 { date; uptime; free | head -2
   ls -la /tmp/awg-monitor.*
   top -bn1 | head -15
-  awg-monitor status | sed -n '/Запущено/,/Функции/p'; } | tee -a $DISK/kt-experiment/load.txt
+  awg-monitor status | sed -n '/Запущено/,/Функции/p'; } | tee -a /opt/kt-experiment/load.txt
 ```
 
 **Что происходит:** только чтение. Результат дописывается в `load.txt`, чтобы потом сравнить
@@ -178,10 +186,9 @@ DISK=/tmp/mnt/<диск>
 **Статус:** ⬜ не начат · **Дата:** — · **Заметки:** —
 
 ```sh
-DISK=/tmp/mnt/<диск>
-cp /tmp/awg-monitor.dnsmap $DISK/kt-experiment/dnsmap-$(date +%m%d-%H%M).txt
-cp /tmp/awg-monitor.includes $DISK/kt-experiment/includes.txt
-ls $DISK/kt-experiment/
+cp /tmp/awg-monitor.dnsmap /opt/kt-experiment/dnsmap-$(date +%m%d-%H%M).txt
+cp /tmp/awg-monitor.includes /opt/kt-experiment/includes.txt
+ls /opt/kt-experiment/
 ```
 
 **Что происходит:** список «домен → IP → устройство» живёт только в RAM и только 6 часов. Копии
@@ -198,8 +205,7 @@ ls $DISK/kt-experiment/
 **Статус:** ⬜ не начат · **Дата:** — · **Заметки:** —
 
 ```sh
-DISK=/tmp/mnt/<диск>
-cd $DISK/kt-experiment
+cd /opt/kt-experiment
 awg-monitor missed 7d | tee missed.txt
 cat dnsmap-*.txt /tmp/awg-monitor.dnsmap 2>/dev/null | awk -v incf=/tmp/awg-monitor.includes '
   BEGIN { while ((getline l < incf) > 0) inc[l] = 1 }
@@ -247,34 +253,37 @@ kill $(cat /tmp/awg-monitor.dns.pid) 2>/dev/null
 
 ---
 
-## 11. Забрать результаты и откатить всё `[ПК]`, затем `[роутер]`
+## 11. Забрать результаты и откатить всё `[роутер]`, затем `[ПК]`
 
 **Статус:** ⬜ не начат · **Дата:** — · **Заметки:** —
 
 ```sh
-# [ПК] — скачать результаты
-ROUTER=root@192.168.1.1; DISK=/tmp/mnt/<диск>
-ssh $ROUTER "tar -C $DISK -cf - kt-experiment" > kt-experiment.tar
+# [роутер] — упаковать результаты для admin
+tar -C /opt -czf /tmp/kt-experiment.tar.gz kt-experiment && chown admin /tmp/kt-experiment.tar.gz
+```
+
+```sh
+# [ПК] — скачать
+scp admin@192.168.1.1:/tmp/kt-experiment.tar.gz .
 ```
 
 ```sh
 # [роутер] — удалить всё
-DISK=/tmp/mnt/<диск>
-cd $DISK/kt-experiment
+cd /opt/kt-experiment
 awg-monitor disable capture --purge
 awg-monitor uninstall --purge
 grep -q '^tcpdump ' before.txt || opkg remove tcpdump
-grep -q '^cron ' before.txt || echo 'cron поставил установщик: opkg remove cron, если другие задания cron не нужны'
-diff crontab.before /opt/etc/crontab && echo 'crontab как до эксперимента'
-cd / && rm -rf $DISK/kt-experiment
-ls /opt/bin/keenetic-tools /opt/bin/awg-monitor /opt/etc/awg-monitor.conf /tmp/awg-monitor.* 2>&1; ps | grep '[t]cpdump'
+cd / && rm -rf /opt/kt-experiment /tmp/kt-experiment.tar.gz
 ```
+
+Затем — «Полный откат» и «Проверка после отката» из [baseline.md](baseline.md): там удаляется
+пакет `cron` с его crontab, а состояние сверяется с бэкапом в `/opt/root/kt-before`.
 
 **Что происходит:**
 - останавливается и удаляется захват, удаляются задание cron, бинарник, симлинк, конфиг, логи,
   бэкапы crontab и файлы в `/tmp`;
-- удаляется `tcpdump`, если его не было до эксперимента;
-- `cron` не удаляется автоматически: он может быть нужен другим заданиям;
-- crontab сравнивается с исходным, папка эксперимента удаляется.
+- `tcpdump` остаётся: он стоял до эксперимента;
+- `cron` до эксперимента не было, его удаляет полный откат из [baseline.md](baseline.md).
 
-**Проверить:** `diff` ничего не выводит, `ls` отвечает «No such file» на каждый путь, `ps` пусто.
+**Проверить:** все `diff` из «Проверки после отката» пустые, `ls` отвечает «No such file» на
+каждый путь, `crond` и `tcpdump` не запущены, `amneziawg-go` работает.
