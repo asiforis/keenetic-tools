@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	hourly = "01 * * * * root /opt/bin/keenetic-tools awg-cron run " + markers.Restart
-	daily  = "02 4 * * * root /opt/bin/keenetic-tools awg-cron run " + markers.Restart
-	other  = "*/10 * * * * root /opt/bin/something\n"
+	hourly  = "01 * * * * root /opt/bin/keenetic-tools awg-cron run " + markers.Restart
+	daily   = "02 4 * * * root /opt/bin/keenetic-tools awg-cron run " + markers.Restart
+	every10 = "1,11,21,31,41,51 * * * * root /opt/bin/keenetic-tools awg-cron run " + markers.Restart
+	other   = "*/10 * * * * root /opt/bin/something\n"
 )
 
 type router struct {
@@ -93,6 +94,10 @@ func TestInstallIdempotentAndSwitchSchedule(t *testing.T) {
 	}
 	r.mustRun("install", "daily")
 	if got := r.Read(Crontab); got != other+daily+"\n" {
+		t.Fatalf("crontab = %q", got)
+	}
+	r.mustRun("install", "10min")
+	if got := r.Read(Crontab); got != other+every10+"\n" {
 		t.Fatalf("crontab = %q", got)
 	}
 }
