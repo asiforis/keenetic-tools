@@ -29,13 +29,15 @@ const (
 // Timeout bounds one restart; a variable so tests can shorten it.
 var Timeout = 120 * time.Second
 
-var schedules = map[string]string{"hourly": "01 * * * *", "daily": "02 4 * * *"}
+// Explicit minute list rather than */10: works in any cron, keeps the :01 offset.
+var schedules = map[string]string{"10min": "1,11,21,31,41,51 * * * *", "hourly": "01 * * * *", "daily": "02 4 * * *"}
 
 func say(env *sys.Env, format string, a ...any) { fmt.Fprintf(env.Stdout, format+"\n", a...) }
 
 func usage(env *sys.Env) {
-	fmt.Fprint(env.Stdout, `Использование: keenetic-tools awg-cron install [hourly|daily] | uninstall
+	fmt.Fprint(env.Stdout, `Использование: keenetic-tools awg-cron install [10min|hourly|daily] | uninstall
   install         — каждый час в :01 (по умолчанию)
+  install 10min   — каждые 10 минут (:01, :11, … :51)
   install daily   — раз в сутки в 04:02 по времени cron
   uninstall       — удалить задание; оставить пакет cron
 `)

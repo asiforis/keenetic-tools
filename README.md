@@ -35,7 +35,7 @@ crontab, файлы в `/tmp`. Чужие задания cron и пакеты En
 
 | Команда | Что делает |
 |---------|------------|
-| `keenetic-tools awg-cron install [hourly\|daily]` | перезапуск туннеля каждый час в :01 или раз в сутки в 04:02 |
+| `keenetic-tools awg-cron install [10min\|hourly\|daily]` | перезапуск туннеля каждые 10 минут (:01, :11, … :51), каждый час в :01 или раз в сутки в 04:02 |
 | `keenetic-tools awg-cron run` | перезапустить туннель сейчас (лог — `/tmp/awg-restart.log`) |
 | `keenetic-tools version` | версия |
 | `awg-monitor status` | что установлено и запущено, сколько данных; состояние туннеля |

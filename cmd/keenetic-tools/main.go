@@ -21,7 +21,7 @@ var version = "dev"
 
 func usage(w io.Writer) {
 	fmt.Fprint(w, `Использование:
-  keenetic-tools awg-cron install [hourly|daily] | uninstall
+  keenetic-tools awg-cron install [10min|hourly|daily] | uninstall
   keenetic-tools awg-cron run          (задание cron: перезапуск туннеля)
   keenetic-tools awg-monitor КОМАНДА   (то же, что awg-monitor КОМАНДА)
   keenetic-tools version
